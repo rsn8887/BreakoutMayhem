@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <algorithm>
 #include "physics.h"
 #include "levels.h"
 
@@ -13,7 +14,7 @@ constexpr int SCREEN_H = 720;
 enum class State { Title, Intro, Playing, Paused, LevelClear, GameOver, Victory };
 enum class Action { Up, Down, Left, Right, Confirm, Back, Pause };
 
-enum PillType { PILL_ENLARGE, PILL_MULTI, PILL_SLOW, PILL_MEGA, PILL_MAGNET, PILL_LIFE, PILL_SHRINK, PILL_COUNT };
+enum PillType { PILL_ENLARGE, PILL_MULTI, PILL_SLOW, PILL_MEGA, PILL_MAGNET, PILL_LIFE, PILL_SHRINK, PILL_GUN, PILL_COUNT };
 
 struct Particle {
     Vec2 pos, vel;
@@ -35,6 +36,11 @@ struct FloatText {
     float t = 0, dur = 1.0f;
     uint32_t color = 0xffffffff;
     bool big = false;
+};
+
+struct Shot {            // laser bolt fired by bats with the laser power-up
+    Vec2 pos;
+    bool alive = true;
 };
 
 struct PendingBlast {
@@ -65,7 +71,8 @@ public:
     int lives = 3;
     int nextExtraLife = 20000;
     int menuIndex = 0;
-    int startLevel = 0;  // chosen in the title menu, 0-based
+    int startSet = 0;    // level set chosen in the title menu, 0-based; levelSetCount() = all levels
+    int runFirst = 0, runLast = 0; // first and last level (0-based) of the set being played
 
     float stateTime = 0;
     float shake = 0;
@@ -73,12 +80,17 @@ public:
     float bgPulse = 0;
 
     // power-up timers (seconds remaining)
-    float tEnlarge = 0, tShrink = 0, tSlow = 0, tMega = 0, tMagnet = 0;
+    float tEnlarge = 0, tShrink = 0, tSlow = 0, tMega = 0, tMagnet = 0, tGun = 0;
+    float gunCooldown = 0;
+
+    int bulbsTotal = 0;  // light bulb bricks at level start
+    float darkness = 0;  // 0 = fully lit, shown smoothly
 
     std::vector<Particle> particles;
     std::vector<Ghost> ghosts;
     std::vector<FloatText> texts;
     std::vector<PendingBlast> blasts;
+    std::vector<Shot> shots;
 
     bool demo = false;            // attract mode on the title screen
     bool aiPlayers[MAX_PLAYERS] = {false, false, false, false};
@@ -98,10 +110,13 @@ public:
     std::string pauseItem(int i) const;
 
     int bricksLeft() const;
+    int setChoices() const { return levelSetCount() + 1; }  // every set, plus "Complete" (all levels)
+    bool completeRun() const { return runFirst == 0 && runLast == levelCount() - 1; }
+    static void setRange(int set, int& first, int& last);
     int ballsAlive() const;
     bool playing() const { return state == State::Playing; }
     bool mouseCaptured() const { return state == State::Playing || state == State::Intro; }
-    void startGame(int players, int lvl);
+    void startGame(int players, int set);
 
     // headless self-test: AI plays every level, returns false on physics trouble
     static bool runSelfTest(int seconds, bool verbose);
@@ -115,7 +130,16 @@ private:
     void loadLevel(int lvl);
     void spawnActors();
     int spawnBall(const BallSpawn& s);
-    void spawnPill(Vec2 pos, Vec2 dir);
+    void spawnPill(Vec2 pos, Vec2 dir, int forcedType = -1);
+    void spawnEnemy(Vec2 pos);
+    void flushSpawns();
+    void removeDead();
+    void killEnemy(Body& e, bool scored);
+    void batDeath(Body& bat);
+    void toggleGroup(int group, Vec2 pos);
+    void updateShots(float dt);
+    void updateEnemies();
+    float targetDarkness() const;
     void simulate(float dt);
     void processEvents();
     void brickHit(Body& ball, Body& brick, float speed);

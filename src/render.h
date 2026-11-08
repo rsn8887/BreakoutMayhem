@@ -27,6 +27,7 @@ private:
     SDL_Texture* bg = nullptr;
     SDL_Texture* glow = nullptr;
     SDL_Texture* logo = nullptr;
+    SDL_Texture* lightMap = nullptr;
     int logoW = 0, logoH = 0;
     int bgLevel = -1;
     int frame = 0;
@@ -60,6 +61,8 @@ private:
 
     // scene
     void drawWorld(Game& g);
+    void drawDarkness(Game& g);
+    void drawTexts(Game& g);
     void drawFields(Game& g);
     void drawBody(Game& g, const Body& b, float scale, Uint8 alpha, bool shadow);
     void drawBat(const Body& b, float scale, Uint8 alpha, bool shadow);

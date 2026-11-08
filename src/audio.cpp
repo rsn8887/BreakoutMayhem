@@ -117,6 +117,13 @@ void build() {
         sounds[SFX_SINK] = a;
     }
     sounds[SFX_MENU] = tone(0.05f, 880, 880, 2, 50, 0, 0.25f);
+    sounds[SFX_LASER] = tone(0.08f, 1700, 500, 1, 30, 0, 0.14f);
+    {
+        auto a = tone(0.06f, 520, 520, 1, 40, 0, 0.2f);
+        mixInto(a, tone(0.08f, 780, 780, 1, 40, 0, 0.2f), 0.05f);
+        sounds[SFX_SWITCH] = a;
+    }
+    sounds[SFX_ZAP] = tone(0.25f, 900, 120, 1, 12, 0.35f, 0.3f);
 }
 
 void callback(void*, Uint8* stream, int len) {

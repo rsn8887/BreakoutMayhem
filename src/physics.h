@@ -6,7 +6,7 @@
 #include <cstdint>
 #include "vec.h"
 
-enum class Kind : uint8_t { Player, Ball, Brick, Pill };
+enum class Kind : uint8_t { Player, Ball, Brick, Pill, Enemy };
 enum class Shape : uint8_t { Circle, Rect, Capsule };
 
 enum class BrickType : uint8_t {
@@ -19,6 +19,13 @@ enum class BrickType : uint8_t {
     GravSwitch, // rotates gravity by 90 degrees when hit
     Rail,       // static or spinning capsule (windmills, pinball rails)
     Conveyor,   // indestructible with a moving surface
+    Skull,      // indestructible, deadly to bats
+    BigBall,    // releases a large, heavy extra ball
+    Magnet,     // attracts balls
+    Nest,       // releases an enemy
+    Bulb,       // light bulb: the room gets darker as bulbs break
+    Switch,     // indestructible, toggles the barriers of its group
+    Barrier,    // energy wall that switches turn on and off
 };
 
 enum class Path : uint8_t { None, Osc, Circle };
@@ -53,6 +60,9 @@ struct Body {
 
     float surfaceSpeed = 0; // conveyor
     float kick = 0;         // bumper extra speed
+    bool solid = true;      // false: switched-off barrier, nothing collides with it
+    bool deadly = false;    // touching it with a bat costs a life
+    int group = -1;         // switch / barrier group
 
     // gameplay
     int hp = 1, maxHp = 1;
@@ -66,7 +76,9 @@ struct Body {
     int player = -1;
     Vec2 input;             // desired velocity from controls
     float thrust = 12;      // acceleration per unit of desired velocity
-    float magnet = 0;       // attracts balls
+    float magnet = 0;       // attracts balls (magnet bats, magnet bricks)
+    float magnetR = 260;    // magnet range
+    float stun = 0;         // seconds a bat stays stunned after an enemy hit
 
     // ball
     int combo = 1;
@@ -100,12 +112,20 @@ struct Hole {
     float suction = 3000; // acceleration toward the center
 };
 
+// rubber band between two bodies: pulls only when stretched beyond its rest length
+struct Band {
+    int a = 0, b = 0;     // body ids
+    float rest = 100;
+    float k = 1.0f;       // stiffness (force per pixel)
+    float damp = 0.03f;   // damping of the stretching speed
+};
+
 struct Portal {
     Vec2 a, b;
     float r = 34;
 };
 
-enum class EvType : uint8_t { Hit, Wall, Swallow, Teleport, Collect };
+enum class EvType : uint8_t { Hit, Wall, Swallow, Teleport, Collect, Touch };
 
 struct PhysEvent {
     explicit PhysEvent(EvType t) : type(t) {}
@@ -121,6 +141,7 @@ struct World {
     std::vector<Field> fields;
     std::vector<Hole> holes;
     std::vector<Portal> portals;
+    std::vector<Band> bands;
     std::vector<PhysEvent> events;
 
     Vec2 gravity{0, 1450};
@@ -137,6 +158,8 @@ struct World {
 
 private:
     std::vector<size_t> dynIdx;
+    std::vector<Vec2> bandAcc;
+    std::vector<size_t> magnets;
     void integrate(float dt);
     void walls();
     void collisions(bool firstPass);

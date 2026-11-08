@@ -232,7 +232,7 @@ void handleEvent(const SDL_Event& e, bool& running) {
                 else if (k == SDLK_DOWN || k == SDLK_s) game.action(Action::Down);
                 else if (k == SDLK_LEFT || k == SDLK_a) game.action(Action::Left);
                 else if (k == SDLK_RIGHT || k == SDLK_d) game.action(Action::Right);
-                else if (game.state == State::Title && k >= SDLK_1 && k <= SDLK_4) game.startGame(int(k - SDLK_0), game.startLevel);
+                else if (game.state == State::Title && k >= SDLK_1 && k <= SDLK_4) game.startGame(int(k - SDLK_0), game.startSet);
             }
             break;
         }

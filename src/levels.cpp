@@ -145,12 +145,16 @@ void moving(Body& b, float ampX, float ampY, float freq, float phase = 0) {
     b.phase = phase;
 }
 
+// Global hole difficulty: every hole in every level is scaled by these factors.
+const float HOLE_SIZE = 0.85f;  // hole radius (and the reach of its pull)
+const float HOLE_PULL = 0.7f;   // strength of the pull
+
 void hole(float x, float y, float r, float suctionR = 0, float suction = 3000) {
     Hole h;
     h.pos = Vec2(x, y);
-    h.r = r;
-    h.suctionR = suctionR > 0 ? suctionR : r * 2.6f;
-    h.suction = suction;
+    h.r = r * HOLE_SIZE;
+    h.suctionR = (suctionR > 0 ? suctionR : r * 2.6f) * HOLE_SIZE;
+    h.suction = suction * HOLE_PULL;
     W->holes.push_back(h);
 }
 
@@ -197,6 +201,75 @@ void portal(float ax, float ay, float bx, float by) {
     p.a = Vec2(ax, ay);
     p.b = Vec2(bx, by);
     W->portals.push_back(p);
+}
+
+Body& skull(float x, float y, float w, float h) {
+    Body& b = rectBrick(x, y, w, h, 8);
+    b.btype = BrickType::Skull;
+    b.counts = false;
+    b.deadly = true;
+    return b;
+}
+
+Body& magnetBrick(float x, float y, float w, float h, int hp) {
+    Body& b = rectBrick(x, y, w, h, 0, hp, 300);
+    b.btype = BrickType::Magnet;
+    b.magnet = 2400;
+    b.magnetR = 240;
+    return b;
+}
+
+Body& nest(float x, float y, float w, float h) {
+    Body& b = rectBrick(x, y, w, h, 3, 1, 200);
+    b.btype = BrickType::Nest;
+    return b;
+}
+
+Body& bigBallBrick(float x, float y, float w, float h) {
+    Body& b = rectBrick(x, y, w, h, 1, 1, 200);
+    b.btype = BrickType::BigBall;
+    return b;
+}
+
+Body& bulb(float x, float y, float r) {
+    Body& b = circBrick(x, y, r, 2, 1, 150);
+    b.btype = BrickType::Bulb;
+    return b;
+}
+
+Body& switchBrick(float x, float y, float s, int group) {
+    Body& b = rectBrick(x, y, s, s, 8);
+    b.btype = BrickType::Switch;
+    b.counts = false;
+    b.group = group;
+    return b;
+}
+
+Body& barrier(float x, float y, float w, float h, int group, bool on) {
+    Body& b = rectBrick(x, y, w, h, 4);
+    b.btype = BrickType::Barrier;
+    b.counts = false;
+    b.group = group;
+    b.solid = on;
+    return b;
+}
+
+BandSpawn band(int a, int b, float rest, float k) {
+    BandSpawn bs;
+    bs.a = a;
+    bs.b = b;
+    bs.rest = rest;
+    bs.k = k;
+    return bs;
+}
+
+BandSpawn tether(int a, int brickId, float rest, float k) {
+    BandSpawn bs;
+    bs.a = a;
+    bs.brickId = brickId;
+    bs.rest = rest;
+    bs.k = k;
+    return bs;
 }
 
 LevelInfo info(const char* name, const char* hint, float hue) {
@@ -637,9 +710,210 @@ LevelInfo L20() {
     return L;
 }
 
+// ---------------------------------------------------------------------------------- levels 21-30
+
+LevelInfo L21() {
+    LevelInfo L = info("Skull Alley", "Skull bricks are deadly - keep your bat away from them!", 0);
+    for (int i = 0; i < 10; i++)
+        for (int j = 0; j < 3; j++) rectBrick(640 + (i - 4.5f) * 112, 100 + j * 36, 100, 28, j + 5, j == 0 ? 2 : 1);
+    skull(250, 330, 64, 40);
+    skull(1030, 330, 64, 40);
+    skull(640, 290, 64, 40);
+    skull(470, 440, 64, 40);
+    skull(810, 440, 64, 40);
+    hole(140, 660, 26, 70, 3000);
+    hole(640, 680, 26, 70, 3000);
+    hole(1140, 660, 26, 70, 3000);
+    L.playerCenter = Vec2(640, 610);
+    L.balls.push_back(ball(640, 520));
+    return L;
+}
+
+LevelInfo L22() {
+    LevelInfo L = info("Rubber Twins", "Two balls tied together with a rubber band.", 160);
+    W->gravity = Vec2(0, 1300);
+    for (int i = 0; i < 10; i++)
+        for (int j = 0; j < 4; j++) rectBrick(640 + (i - 4.5f) * 112, 96 + j * 34, 100, 26, (i + j) % 8, j == 0 ? 2 : 1);
+    hole(160, 665, 26, 70, 3000);
+    hole(640, 685, 26, 70, 3000);
+    hole(1120, 665, 26, 70, 3000);
+    L.playerCenter = Vec2(640, 610);
+    L.balls = {ball(580, 500), ball(700, 500)};
+    L.bands.push_back(band(0, 1, 110, 1.2f));
+    return L;
+}
+
+LevelInfo L23() {
+    LevelInfo L = info("Magnetism", "Magnet bricks pull the ball off course. Break them!", 350);
+    W->gravity = Vec2(0, 1150);
+    magnetBrick(300, 340, 70, 44, 3);
+    magnetBrick(980, 340, 70, 44, 3);
+    magnetBrick(640, 240, 70, 44, 3);
+    for (int i = 0; i < 10; i++)
+        for (int j = 0; j < 2; j++) rectBrick(640 + (i - 4.5f) * 112, 96 + j * 34, 100, 26, 5 - j);
+    for (int j = 0; j < 4; j++) {
+        rectBrick(80, 200 + j * 40, 90, 28, 4);
+        rectBrick(1200, 200 + j * 40, 90, 28, 4);
+    }
+    hole(160, 660, 26, 70, 3000);
+    hole(640, 680, 26, 70, 3000);
+    hole(1120, 660, 26, 70, 3000);
+    L.playerCenter = Vec2(640, 610);
+    L.balls.push_back(ball(640, 520));
+    return L;
+}
+
+LevelInfo L24() {
+    LevelInfo L = info("Invaders", "Bricks with eyes hatch enemies. Grab the laser and shoot them!", 210);
+    W->gravity = Vec2(0, 1300);
+    L.enemies = true;
+    auto isNest = [](int i, int j) {
+        return (j == 1 && (i == 2 || i == 5 || i == 8)) || (j == 3 && (i == 1 || i == 5 || i == 9));
+    };
+    for (int i = 0; i < 11; i++)
+        for (int j = 0; j < 5; j++) {
+            float x = 640 + (i - 5) * 106, y = 96 + j * 32;
+            if (isNest(i, j)) nest(x, y, 96, 26);
+            else rectBrick(x, y, 96, 26, j % 2 ? 6 : 7);
+        }
+    hole(160, 665, 26, 70, 3000);
+    hole(640, 685, 26, 70, 3000);
+    hole(1120, 665, 26, 70, 3000);
+    L.playerCenter = Vec2(640, 610);
+    L.balls.push_back(ball(640, 520));
+    return L;
+}
+
+LevelInfo L25() {
+    LevelInfo L = info("Blackout", "Every broken light bulb makes the room darker.", 45);
+    W->gravity = Vec2(0, 1300);
+    for (int i = 0; i < 10; i++)
+        for (int j = 0; j < 3; j++) rectBrick(640 + (i - 4.5f) * 112, 100 + j * 36, 100, 28, j + 1);
+    for (int i = 0; i < 9; i++) bulb(160 + i * 120, 250, 20);
+    bulb(220, 380, 20);
+    bulb(500, 380, 20);
+    bulb(780, 380, 20);
+    bulb(1060, 380, 20);
+    hole(120, 640, 26, 70, 3000);
+    hole(400, 690, 24, 64, 3000);
+    hole(880, 690, 24, 64, 3000);
+    hole(1160, 640, 26, 70, 3000);
+    L.playerCenter = Vec2(640, 610);
+    L.balls.push_back(ball(640, 520));
+    return L;
+}
+
+LevelInfo L26() {
+    LevelInfo L = info("Triangle", "Three balls tied in a triangle. Orange bricks release a big ball.", 230);
+    W->gravity = Vec2(0, 1100);
+    for (int j = 0; j < 5; j++) {
+        int k = 10 - 2 * std::abs(j - 2);
+        for (int i = 0; i < k; i++) {
+            float x = 640 + (i - (k - 1) * 0.5f) * 100, y = 100 + j * 34;
+            if (j == 2 && (i == 0 || i == k - 1)) bigBallBrick(x, y, 90, 28);
+            else rectBrick(x, y, 90, 28, (j + 3) % 8, j == 2 ? 2 : 1);
+        }
+    }
+    hole(160, 665, 26, 70, 3000);
+    hole(640, 685, 26, 70, 3000);
+    hole(1120, 665, 26, 70, 3000);
+    L.playerCenter = Vec2(640, 615);
+    L.balls = {ball(640, 440), ball(585, 535), ball(695, 535)};
+    L.bands = {band(0, 1, 110, 1.0f), band(1, 2, 110, 1.0f), band(2, 0, 110, 1.0f)};
+    return L;
+}
+
+LevelInfo L27() {
+    LevelInfo L = info("Heavyweights", "Big heavy balls and skulls. Watch your bat!", 20);
+    for (int i = 0; i < 10; i++)
+        for (int j = 0; j < 4; j++) {
+            float x = 640 + (i - 4.5f) * 112, y = 96 + j * 34;
+            if ((j == 1 && (i == 2 || i == 7)) || (j == 3 && i == 4)) bigBallBrick(x, y, 100, 26);
+            else rectBrick(x, y, 100, 26, j == 0 ? 8 : 6 - j, j == 0 ? 2 : 1);
+        }
+    skull(300, 420, 64, 40);
+    skull(980, 420, 64, 40);
+    hole(160, 665, 32, 80, 3000);
+    hole(640, 685, 32, 80, 3000);
+    hole(1120, 665, 32, 80, 3000);
+    L.playerCenter = Vec2(640, 610);
+    L.balls.push_back(ball(640, 520));
+    return L;
+}
+
+LevelInfo L28() {
+    LevelInfo L = info("Tetherball", "Two balls are tied to gold bricks. Break them to set the balls free.", 300);
+    W->gravity = Vec2(0, 1300);
+    int a1 = circBrick(380, 250, 26, 2, 3, 500).id;
+    int a2 = circBrick(900, 250, 26, 2, 3, 500).id;
+    for (int i = 0; i < 10; i++)
+        for (int j = 0; j < 2; j++) rectBrick(640 + (i - 4.5f) * 112, 100 + j * 36, 100, 28, j ? 4 : 5);
+    for (int i = 0; i < 3; i++) rectBrick(640, 230 + i * 40, 100, 28, 7);
+    hole(160, 665, 26, 70, 3000);
+    hole(640, 685, 26, 70, 3000);
+    hole(1120, 665, 26, 70, 3000);
+    L.playerCenter = Vec2(640, 610);
+    L.balls = {ball(640, 520), ball(380, 400), ball(900, 400)};
+    L.bands = {tether(1, a1, 150, 1.4f), tether(2, a2, 150, 1.4f)};
+    return L;
+}
+
+LevelInfo L29() {
+    LevelInfo L = info("Switchboard", "Hit the switches to turn the energy walls on and off.", 185);
+    W->gravity = Vec2(0, 1300);
+    for (int v = 0; v < 2; v++) {            // two vaults behind energy walls
+        float cx = v ? 1030 : 250;
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) rectBrick(cx - 80 + i * 80, 110 + j * 36, 72, 28, v ? 5 : 0);
+        barrier(cx - 165, 150, 12, 200, v, true);
+        barrier(cx + 165, 150, 12, 200, v, true);
+        barrier(cx, 250, 342, 12, v, true);
+    }
+    switchBrick(1060, 420, 40, 0);           // outside switches open the opposite vault
+    switchBrick(220, 420, 40, 1);
+    switchBrick(380, 222, 36, 0);            // inside switches, so a trapped ball can get out
+    switchBrick(900, 222, 36, 1);
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) rectBrick(560 + i * 80, 110 + j * 36, 72, 28, 2, 2);
+    barrier(640, 640, 180, 12, 2, true);     // gate in front of the middle hole
+    switchBrick(450, 330, 40, 2);
+    hole(640, 680, 28, 70, 3000);
+    hole(150, 670, 26, 70, 3000);
+    hole(1130, 670, 26, 70, 3000);
+    L.playerCenter = Vec2(640, 580);
+    L.balls.push_back(ball(640, 500));
+    return L;
+}
+
+LevelInfo L30() {
+    LevelInfo L = info("Total Mayhem", "Everything new at once. Good luck!", 320);
+    W->gravity = Vec2(0, 1300);
+    L.enemies = true;
+    for (int i = 0; i < 11; i++)
+        for (int j = 0; j < 4; j++) {
+            float x = 640 + (i - 5) * 106, y = 95 + j * 30;
+            if (j == 1 && (i == 3 || i == 7)) nest(x, y, 96, 24);
+            else if (j == 2 && i == 5) bigBallBrick(x, y, 96, 24);
+            else rectBrick(x, y, 96, 24, (i + j) % 8, j == 0 ? 2 : 1);
+        }
+    magnetBrick(640, 300, 64, 40, 3);
+    skull(240, 380, 64, 40);
+    skull(1040, 380, 64, 40);
+    barrier(640, 645, 180, 12, 0, true);
+    switchBrick(200, 260, 40, 0);
+    hole(160, 670, 26, 70, 3000);
+    hole(640, 690, 26, 70, 3000);
+    hole(1120, 670, 26, 70, 3000);
+    L.playerCenter = Vec2(640, 615);
+    L.balls = {ball(590, 430), ball(690, 430), ball(590, 530), ball(690, 530)};
+    L.bands = {band(0, 1, 100, 1.0f), band(1, 3, 100, 1.0f), band(3, 2, 100, 1.0f), band(2, 0, 100, 1.0f)};
+    return L;
+}
+
 using Builder = LevelInfo (*)();
 const Builder builders[] = {L01, L02, L03, L04, L05, L06, L07, L08, L09, L10,
-                            L11, L12, L13, L14, L15, L16, L17, L18, L19, L20};
+                            L11, L12, L13, L14, L15, L16, L17, L18, L19, L20,
+                            L21, L22, L23, L24, L25, L26, L27, L28, L29, L30};
 
 } // namespace
 

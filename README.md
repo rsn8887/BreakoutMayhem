@@ -16,7 +16,7 @@ It uses hand-coded, force-based physics:
 
 ## Features
 
-- 1280×720, 20 levels each built around a different physics idea
+- 1280×720, 30 levels in six level sets of five, each level built around a different physics idea
 - capsule bat with rounded ends: hits near an end deflect the ball, Arkanoid-style
 - up to 4 simultaneous players (mouse, keyboard, gamepads, Switch touch screen)
 - runs on Linux, macOS, Windows and Nintendo Switch
@@ -39,7 +39,7 @@ It uses hand-coded, force-based physics:
 | K / L | mouse sensitivity down / up |
 | M | sound on / off |
 
-In the title menu, choose the number of players and a start level (any level you have reached).
+In the title menu, choose the number of players and a level set: one of the six sets of five levels, or "Complete" to play all 30 levels in a row.
 
 ## Building
 

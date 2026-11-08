@@ -56,6 +56,11 @@ SDL_Texture* rasterize(SDL_Renderer* R, int w, int h, SDF sdf, SHADE shade) {
 }
 
 const float LX = -0.45f, LY = -0.6f, LZ = 0.66f; // light from the top left
+
+uint32_t groupColor(int g) {
+    static const uint32_t c[4] = {0x40E0FF, 0xFFA040, 0xFF60C0, 0x80FF60};
+    return c[((g % 4) + 4) % 4];
+}
 const Vec2 L2(-0.6f, -0.8f);
 
 float sdRoundBox(float px, float py, float hx, float hy, float r) {
@@ -105,7 +110,8 @@ void Renderer::shutdown() {
     if (bg) SDL_DestroyTexture(bg);
     if (glow) SDL_DestroyTexture(glow);
     if (logo) SDL_DestroyTexture(logo);
-    bg = glow = logo = nullptr;
+    if (lightMap) SDL_DestroyTexture(lightMap);
+    bg = glow = logo = lightMap = nullptr;
     for (auto& f : fonts) {
         if (f) TTF_CloseFont(f);
         f = nullptr;
@@ -166,6 +172,10 @@ Renderer::Tex& Renderer::sphere(int r, uint32_t color, int style) {
             case 5: // billiard puck
                 o = light(nx, ny, nz, rad < 0.42f ? rgb(0xF4F4F0) : base, 0.32f, 0.8f, 0.9f, 48);
                 break;
+            case 7: // enemy blob
+                o = light(nx, ny, nz * 1.2f, base, 0.35f, 0.85f, 0.9f, 30);
+                if (rad > 0.55f && rad < 0.62f && ny > 0.1f) o = mul(o, 0.7f);
+                break;
             case 6: { // disc bat
                 o = light(nx, ny, nz * 1.6f + 0.2f, base, 0.38f, 0.75f, 0.8f, 36);
                 if (rad > 0.66f && rad < 0.74f) o = mul(o, 0.7f);
@@ -195,6 +205,8 @@ Renderer::Tex& Renderer::brick(int w, int h, uint32_t color, int style) {
     RGBf base = rgb(color);
     if (style == 3) base = rgb(0xA4ACB8);
     if (style == 7) base = rgb(0x4A5058);
+    if (style == 8) base = rgb(0x2E2A30);
+    if (style == 9) base = rgb(0x50555C);
     auto sdf = [=](float x, float y) { return sdRoundBox(x - cx, y - cy, hx, hy, cr); };
     auto shade = [=](float x, float y, float d) {
         float din = -d;
@@ -240,6 +252,60 @@ Renderer::Tex& Renderer::brick(int w, int h, uint32_t color, int style) {
             case 7: // conveyor belt body
                 if (inner < 0) s *= 0.75f;
                 break;
+            case 8: { // skull
+                float k = h * 0.42f;
+                float u = (x - cx) / k, v = (y - cy) / k;
+                bool head = u * u + (v + 0.15f) * (v + 0.15f) < 0.62f * 0.62f;
+                bool jaw = std::fabs(u) < 0.38f && v > 0.1f && v < 0.66f;
+                if (head || jaw) {
+                    c = rgb(0xF2EEE2);
+                    s = 1.05f - 0.25f * (v + 0.6f) * 0.5f;
+                    bool eye = (std::fabs(u) - 0.27f) * (std::fabs(u) - 0.27f) + (v + 0.12f) * (v + 0.12f) < 0.18f * 0.18f;
+                    bool nose = u * u + (v - 0.17f) * (v - 0.17f) < 0.08f * 0.08f;
+                    bool teeth = v > 0.44f && (std::fabs(u) < 0.025f || std::fabs(std::fabs(u) - 0.15f) < 0.025f);
+                    if (eye || nose) { c = rgb(0x120808); s = 1; }
+                    if (teeth) s *= 0.55f;
+                }
+                break;
+            }
+            case 9: { // magnet: red horseshoe with silver tips
+                float k = h;
+                float u = (x - cx) / k, v = (y - cy) / k + 0.08f;
+                float r = std::sqrt(u * u + v * v);
+                bool ring = v <= 0 && r > 0.18f && r < 0.36f;
+                bool leg = v > 0 && v < 0.34f && std::fabs(u) > 0.18f && std::fabs(u) < 0.36f;
+                if (ring || leg) {
+                    c = (leg && v > 0.2f) ? rgb(0xE0E4EA) : rgb(0xD8302A);
+                    float shadeU = ring ? (r - 0.27f) / 0.09f : (std::fabs(u) - 0.27f) / 0.09f;
+                    s = 1.0f - 0.25f * shadeU;
+                }
+                break;
+            }
+            case 10: { // nest: a brick with two eyes
+                float k = h;
+                for (int e = -1; e <= 1; e += 2) {
+                    float u = (x - cx) / k - e * 0.42f, v = (y - cy) / k + 0.02f;
+                    if ((u / 0.2f) * (u / 0.2f) + (v / 0.27f) * (v / 0.27f) < 1) {
+                        c = rgb(0xFFFFF0);
+                        s = 1;
+                        float pu = u - 0.03f, pv = v - 0.07f;
+                        if (pu * pu + pv * pv < 0.1f * 0.1f) c = rgb(0x101010);
+                    }
+                }
+                break;
+            }
+            case 12: { // big ball inside
+                float rr = h * 0.36f;
+                float dx = x - cx, dy = y - cy, dd = std::sqrt(dx * dx + dy * dy);
+                if (dd < rr) {
+                    float nx = dx / rr, ny = dy / rr;
+                    float nz = std::sqrt(std::max(0.f, 1 - nx * nx - ny * ny));
+                    float diff = std::max(0.f, nx * LX + ny * LY + nz * LZ);
+                    c = rgb(0x6E7078);
+                    s = 0.3f + 0.9f * diff + (dd > rr - 1.2f ? -0.4f : 0.f);
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -577,6 +643,8 @@ void Renderer::draw(Game& g) {
     SDL_RenderClear(R);
     SDL_RenderCopy(R, bg, nullptr, nullptr);
     drawWorld(g);
+    drawDarkness(g);
+    drawTexts(g);
     drawFrame();
     if (g.state != State::Title) drawHud(g);
     drawOverlay(g);
@@ -727,6 +795,16 @@ void Renderer::drawBody(Game& g, const Body& b, float scale, Uint8 alpha, bool s
                 float pulse = 0.5f + 0.5f * std::sin(time * 8);
                 glowAt(p, 120 + 20 * pulse, SDL_Color{80, 160, 255, Uint8(60 + 40 * pulse)});
             }
+            if (b.stun > 0 && std::fmod(time, 0.2f) < 0.1f) alpha = Uint8(alpha * 0.35f);
+            if (!shadow && g.tGun > 0) {
+                SDL_Color gun{170, 175, 185, alpha};
+                if (b.shape == Shape::Capsule) {
+                    rect(p.x - b.hw - 3, p.y - b.r - 7, 6, 9, gun);
+                    rect(p.x + b.hw - 3, p.y - b.r - 7, 6, 9, gun);
+                } else {
+                    rect(p.x - 3, p.y - b.r - 7, 6, 9, gun);
+                }
+            }
             if (b.shape == Shape::Capsule) {
                 drawBat(b, scale, alpha, shadow);
             } else {
@@ -735,6 +813,18 @@ void Renderer::drawBody(Game& g, const Body& b, float scale, Uint8 alpha, bool s
                 blit(t, p.x, p.y, t.w * s, t.h * s, 0, alpha, shadow);
                 if (!shadow && b.flash > 0)
                     blit(t, p.x, p.y, t.w * s, t.h * s, 0, Uint8(std::min(1.f, b.flash / 0.15f) * 140), false, true);
+            }
+            break;
+        }
+        case Kind::Enemy: {
+            Tex& t = sphere(int(b.r), 0x58D058, 7);
+            blit(t, p.x, p.y, t.w * scale, t.h * scale, 0, alpha, shadow);
+            if (shadow) break;
+            Vec2 look = b.vel.len() > 1 ? b.vel.norm() : Vec2(0, 1);
+            for (int e = -1; e <= 1; e += 2) {
+                Vec2 ep = p + Vec2(e * b.r * 0.38f, -b.r * 0.2f) * scale;
+                disc(ep, b.r * 0.3f * scale, SDL_Color{255, 255, 255, alpha}, 12);
+                disc(ep + look * (b.r * 0.12f * scale), b.r * 0.15f * scale, SDL_Color{10, 10, 10, alpha}, 10);
             }
             break;
         }
@@ -758,11 +848,51 @@ void Renderer::drawBody(Game& g, const Body& b, float scale, Uint8 alpha, bool s
                 }
                 break;
             }
+            if (b.btype == BrickType::Barrier) {
+                SDL_Color bc = col(groupColor(b.group));
+                float x0 = p.x - b.hw, y0 = p.y - b.hh, w = 2 * b.hw, h = 2 * b.hh;
+                if (shadow) {
+                    if (b.solid) rect(x0, y0, w, h, SDL_Color{0, 0, 0, Uint8(alpha * 0.25f)});
+                    break;
+                }
+                if (b.solid) {
+                    float fl = 0.75f + 0.25f * std::sin(time * 23.f + p.x * 0.05f);
+                    rect(x0, y0, w, h, SDL_Color{bc.r, bc.g, bc.b, Uint8(150 * fl)});
+                    rect(x0 + 2, y0 + 2, w - 4, h - 4, SDL_Color{255, 255, 255, Uint8(90 * fl)});
+                    // soft halo along the wall
+                    rect(x0 - 3, y0 - 3, w + 6, h + 6, SDL_Color{bc.r, bc.g, bc.b, Uint8(45 * fl)});
+                } else {
+                    // switched off: dashed outline only
+                    bool horiz = w > h;
+                    float len = horiz ? w : h;
+                    for (float d = 0; d < len; d += 16) {
+                        float seg = std::min(8.f, len - d);
+                        if (horiz) {
+                            rect(x0 + d, y0, seg, 2, SDL_Color{bc.r, bc.g, bc.b, 130});
+                            rect(x0 + d, y0 + h - 2, seg, 2, SDL_Color{bc.r, bc.g, bc.b, 130});
+                        } else {
+                            rect(x0, y0 + d, 2, seg, SDL_Color{bc.r, bc.g, bc.b, 130});
+                            rect(x0 + w - 2, y0 + d, 2, seg, SDL_Color{bc.r, bc.g, bc.b, 130});
+                        }
+                    }
+                }
+                break;
+            }
             if (b.shape == Shape::Circle) {
                 int style = 1;
                 if (b.btype == BrickType::Bumper) style = 4;
                 else if (b.btype == BrickType::Puck) style = 5;
+                else if (b.btype == BrickType::Bulb) style = 0;
                 else style = b.maxHp >= 3 ? 3 : (b.maxHp == 2 ? 2 : 1);
+                if (b.btype == BrickType::Bulb) {
+                    c = 0xFFF0B0;
+                    if (!shadow) {
+                        float fl = 0.85f + 0.15f * std::sin(time * 7.f + b.id);
+                        glowAt(p, b.r * 3.2f, SDL_Color{255, 230, 140, Uint8(alpha * 0.55f * fl)});
+                    }
+                    rect(p.x - b.r * 0.45f, p.y + b.r * 0.75f, b.r * 0.9f, b.r * 0.5f,
+                         shadow ? SDL_Color{0, 0, 0, Uint8(alpha * 0.3f)} : SDL_Color{150, 150, 160, alpha});
+                }
                 t = &sphere(int(b.r), c, style);
             } else {
                 int style = b.maxHp >= 3 ? 2 : (b.maxHp == 2 ? 1 : 0);
@@ -772,6 +902,11 @@ void Renderer::drawBody(Game& g, const Body& b, float scale, Uint8 alpha, bool s
                     case BrickType::Multi: style = 5; break;
                     case BrickType::GravSwitch: style = 6; break;
                     case BrickType::Conveyor: style = 7; break;
+                    case BrickType::Skull: style = 8; break;
+                    case BrickType::Magnet: style = 9; break;
+                    case BrickType::Nest: style = 10; break;
+                    case BrickType::BigBall: style = 12; break;
+                    case BrickType::Switch: style = 3; break;
                     default: break;
                 }
                 t = &brick(int(2 * b.hw), int(2 * b.hh), c, style);
@@ -792,6 +927,16 @@ void Renderer::drawBody(Game& g, const Body& b, float scale, Uint8 alpha, bool s
                     line(m, e, 3, SDL_Color{230, 200, 60, 220});
                 }
                 SDL_RenderSetClipRect(R, nullptr);
+            }
+            if (b.btype == BrickType::Switch) {
+                // lamp shows whether this switch's energy walls are on
+                bool on = false;
+                for (const auto& o : g.world.bodies)
+                    if (o.btype == BrickType::Barrier && o.group == b.group) on = o.solid;
+                SDL_Color gc = col(groupColor(b.group));
+                disc(p, b.hw * 0.48f, SDL_Color{20, 20, 24, 255}, 20);
+                disc(p, b.hw * 0.36f, on ? gc : SDL_Color{Uint8(gc.r / 4), Uint8(gc.g / 4), Uint8(gc.b / 4), 255}, 20);
+                if (on) glowAt(p, b.hw * 1.3f, SDL_Color{gc.r, gc.g, gc.b, 120});
             }
             if (b.btype == BrickType::GravSwitch) {
                 Vec2 gd = g.world.gravity.len() > 1 ? g.world.gravity.norm() : Vec2(0, 1);
@@ -851,6 +996,21 @@ void Renderer::drawWorld(Game& g) {
         }
         rect(a.x - 12, a.y, 24, 6, col(0x50545C));
     }
+    // rubber bands
+    for (const auto& band : w.bands) {
+        const Body* a = nullptr;
+        const Body* c = nullptr;
+        for (const auto& b : w.bodies) {
+            if (b.id == band.a) a = &b;
+            if (b.id == band.b) c = &b;
+        }
+        if (!a || !c) continue;
+        float L = (c->pos - a->pos).len();
+        float stretch = std::max(0.f, L - band.rest) / band.rest;
+        float th = clampf(4.5f - 3.f * stretch, 1.5f, 4.5f);
+        line(a->pos + off + Vec2(5, 5), c->pos + off + Vec2(5, 5), th, SDL_Color{0, 0, 0, 50});
+        line(a->pos + off, c->pos + off, th, SDL_Color{Uint8(190 + std::min(60.f, 60 * stretch)), 60, 45, 235});
+    }
     // shadows
     for (const auto& b : w.bodies) drawBody(g, b, 1, 255, true);
     for (const auto& gh : g.ghosts) {
@@ -861,7 +1021,7 @@ void Renderer::drawWorld(Game& g) {
         }
     }
     // bodies: bricks first, then pills, players, balls
-    const Kind order[4] = {Kind::Brick, Kind::Pill, Kind::Player, Kind::Ball};
+    const Kind order[5] = {Kind::Brick, Kind::Pill, Kind::Enemy, Kind::Player, Kind::Ball};
     for (Kind k : order)
         for (const auto& b : w.bodies)
             if (b.kind == k) drawBody(g, b, 1, 255, false);
@@ -881,7 +1041,42 @@ void Renderer::drawWorld(Game& g) {
         float s = p.size * (0.4f + 0.6f * a);
         rect(p.pos.x + off.x - s * 0.5f, p.pos.y + off.y - s * 0.5f, s, s, SDL_Color{p.r, p.g, p.b, Uint8(255 * a)});
     }
-    // floating texts
+    // laser bolts
+    for (const auto& sh : g.shots) {
+        Vec2 p = sh.pos + off;
+        line(p + Vec2(2, 2), p + Vec2(2, 20), 6, SDL_Color{0, 0, 0, 70});
+        line(p, p + Vec2(0, 18), 6, SDL_Color{240, 50, 30, 255});
+        line(p + Vec2(0, 2), p + Vec2(0, 16), 2, SDL_Color{255, 255, 220, 255});
+    }
+}
+
+// Light bulb levels: the scene is multiplied by a light map that gets darker as bulbs break.
+// Balls, bats, enemies and the remaining bulbs carry their own light.
+void Renderer::drawDarkness(Game& g) {
+    if (g.darkness < 0.01f) return;
+    if (!lightMap) {
+        lightMap = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
+        if (!lightMap) return;
+        SDL_SetTextureBlendMode(lightMap, SDL_BLENDMODE_MOD);
+    }
+    SDL_Texture* prev = SDL_GetRenderTarget(R);
+    SDL_SetRenderTarget(R, lightMap);
+    Uint8 amb = Uint8(255 * (1 - g.darkness));
+    SDL_SetRenderDrawColor(R, amb, amb, amb, 255);
+    SDL_RenderClear(R);
+    for (const auto& b : g.world.bodies) {
+        Vec2 p = b.pos + off;
+        if (b.kind == Kind::Ball) glowAt(p, 150, SDL_Color{255, 240, 210, 255});
+        else if (b.kind == Kind::Player) glowAt(p, 120, SDL_Color{200, 215, 255, 220});
+        else if (b.kind == Kind::Enemy) glowAt(p, 60, SDL_Color{150, 255, 150, 200});
+        else if (b.btype == BrickType::Bulb) glowAt(p, 170, SDL_Color{255, 235, 170, 255});
+    }
+    for (const auto& sh : g.shots) glowAt(sh.pos + off, 40, SDL_Color{255, 240, 150, 200});
+    SDL_SetRenderTarget(R, prev);
+    SDL_RenderCopy(R, lightMap, nullptr, nullptr);
+}
+
+void Renderer::drawTexts(Game& g) {
     for (const auto& t : g.texts) {
         float a = 1 - std::max(0.f, (t.t / t.dur - 0.6f) / 0.4f);
         text(t.text, t.big ? FONT_MEDIUM : FONT_SMALL, t.pos.x, t.pos.y - 14, t.color, ALIGN_CENTER, true, Uint8(255 * a));
@@ -913,7 +1108,8 @@ void Renderer::drawHud(Game& g) {
     // power-ups
     float x = 840;
     struct PU { float t; int type; };
-    const PU pus[5] = {{g.tEnlarge, PILL_ENLARGE}, {g.tShrink, PILL_SHRINK}, {g.tSlow, PILL_SLOW}, {g.tMega, PILL_MEGA}, {g.tMagnet, PILL_MAGNET}};
+    const PU pus[6] = {{g.tEnlarge, PILL_ENLARGE}, {g.tShrink, PILL_SHRINK}, {g.tSlow, PILL_SLOW},
+                       {g.tMega, PILL_MEGA},       {g.tMagnet, PILL_MAGNET},   {g.tGun, PILL_GUN}};
     for (const auto& pu : pus) {
         if (pu.t <= 0) continue;
         Tex& t = capsule(34, 9, pillColor(pu.type), 0);
@@ -1031,14 +1227,21 @@ void Renderer::drawOverlay(Game& g) {
             break;
         }
         case State::Victory: {
-            panel(290, 200, 700, 300);
-            text("CONGRATULATIONS!", FONT_LARGE, 640, 220, 0xFFE070, ALIGN_CENTER);
-            std::snprintf(buf, sizeof buf, "You beat all %d levels of mayhem!", levelCount());
-            text(buf, FONT_MEDIUM, 640, 290, 0xFFFFFF, ALIGN_CENTER);
+            panel(290, 190, 700, 330);
+            text("CONGRATULATIONS!", FONT_LARGE, 640, 204, 0xFFE070, ALIGN_CENTER);
+            if (g.completeRun())
+                std::snprintf(buf, sizeof buf, "You beat all %d levels of mayhem!", levelCount());
+            else if (g.runFirst / LEVELS_PER_SET == g.runLast / LEVELS_PER_SET)
+                std::snprintf(buf, sizeof buf, "Level set %d complete! (levels %d-%d)", g.runFirst / LEVELS_PER_SET + 1,
+                              g.runFirst + 1, g.runLast + 1);
+            else
+                std::snprintf(buf, sizeof buf, "Levels %d-%d complete!", g.runFirst + 1, g.runLast + 1);
+            text(buf, FONT_MEDIUM, 640, 270, 0xFFFFFF, ALIGN_CENTER);
             std::snprintf(buf, sizeof buf, "Final score %d", g.score);
-            text(buf, FONT_MEDIUM, 640, 340, 0xFFFFFF, ALIGN_CENTER);
-            if (g.score >= g.settings.hiscore) text("NEW HI-SCORE!", FONT_MEDIUM, 640, 390, 0xFF80C0, ALIGN_CENTER);
-            if (blinkOn) text("Click, Space or (A) to continue", FONT_SMALL, 640, 448, 0xC8D0E0, ALIGN_CENTER);
+            text(buf, FONT_MEDIUM, 640, 314, 0xFFFFFF, ALIGN_CENTER);
+            if (!g.completeRun()) text("Now try the next level set!", FONT_MEDIUM, 640, 358, 0xFFE070, ALIGN_CENTER);
+            if (g.score >= g.settings.hiscore) text("NEW HI-SCORE!", FONT_MEDIUM, 640, 402, 0xFF80C0, ALIGN_CENTER);
+            if (blinkOn) text("Click, Space or (A) to continue", FONT_SMALL, 640, 466, 0xC8D0E0, ALIGN_CENTER);
             break;
         }
         default:

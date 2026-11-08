@@ -16,9 +16,17 @@ constexpr float BAT_HW = 80, BAT_R = 12, DISC_R = 30; // bat: capsule, 160 px wi
 constexpr int MAX_BALLS = 8;
 
 bool breakable(const Body& b) {
-    return b.kind == Kind::Brick &&
-           (b.btype == BrickType::Normal || b.btype == BrickType::Explosive || b.btype == BrickType::Multi);
+    if (b.kind != Kind::Brick) return false;
+    switch (b.btype) {
+        case BrickType::Normal: case BrickType::Explosive: case BrickType::Multi: case BrickType::BigBall:
+        case BrickType::Magnet: case BrickType::Nest: case BrickType::Bulb:
+            return true;
+        default:
+            return false;
+    }
 }
+
+constexpr int MAX_ENEMIES = 6;
 
 } // namespace
 
@@ -34,15 +42,15 @@ uint32_t playerColor(int idx) {
 }
 
 const char* pillLabel(int t) {
-    static const char* l[PILL_COUNT] = {"E", "3", "S", "M", "G", "+", "-"};
+    static const char* l[PILL_COUNT] = {"E", "3", "S", "M", "G", "+", "-", "L"};
     return l[t];
 }
 const char* pillName(int t) {
-    static const char* l[PILL_COUNT] = {"BIG BAT", "MULTIBALL", "SLOW-MO", "MEGA BALL", "MAGNET", "EXTRA LIFE", "SMALL BAT"};
+    static const char* l[PILL_COUNT] = {"BIG BAT", "MULTIBALL", "SLOW-MO", "MEGA BALL", "MAGNET", "EXTRA LIFE", "SMALL BAT", "LASER"};
     return l[t];
 }
 uint32_t pillColor(int t) {
-    static const uint32_t c[PILL_COUNT] = {0x3FBF4F, 0x2EC4D6, 0xF29A1E, 0xE23B3B, 0x3B6BE2, 0xE25BB0, 0x6A6A70};
+    static const uint32_t c[PILL_COUNT] = {0x3FBF4F, 0x2EC4D6, 0xF29A1E, 0xE23B3B, 0x3B6BE2, 0xE25BB0, 0x6A6A70, 0xE8C020};
     return c[t];
 }
 
@@ -53,7 +61,7 @@ void Game::init() {
     state = State::Title;
     demo = true;
     numPlayers = 1;
-    startLevel = std::min(startLevel, settings.maxLevel - 1);
+    startSet = std::min(startSet, setChoices() - 1);
     startDemoLevel(int(frand(0, float(levelCount()))) % levelCount(), 1);
     state = State::Title;
     demo = true;
@@ -67,7 +75,21 @@ void Game::startDemoLevel(int lvl, int players) {
     demoTimer = 0;
 }
 
-void Game::startGame(int players, int lvl) {
+// level range of a menu choice: sets of five, the last choice plays every level in sequence
+void Game::setRange(int set, int& first, int& last) {
+    if (set >= levelSetCount()) {
+        first = 0;
+        last = levelCount() - 1;
+    } else {
+        first = set * LEVELS_PER_SET;
+        last = std::min(levelCount(), first + LEVELS_PER_SET) - 1;
+    }
+}
+
+void Game::startGame(int players, int set) {
+    int lvl;
+    setRange(set, runFirst, runLast);
+    lvl = runFirst;
     demo = false;
     numPlayers = worldPlayers = players;
     for (int i = 0; i < MAX_PLAYERS; i++) aiPlayers[i] = false;
@@ -88,8 +110,12 @@ void Game::loadLevel(int lvl) {
     ghosts.clear();
     texts.clear();
     blasts.clear();
-    tEnlarge = tShrink = tSlow = tMega = tMagnet = 0;
+    tEnlarge = tShrink = tSlow = tMega = tMagnet = tGun = 0;
     accumulator = 0;
+    bulbsTotal = 0;
+    for (const auto& b : world.bodies)
+        if (b.btype == BrickType::Bulb) bulbsTotal++;
+    darkness = 0;
     spawnActors();
     levelChanged++;
 }
@@ -97,9 +123,14 @@ void Game::loadLevel(int lvl) {
 void Game::spawnActors() {
     auto& bs = world.bodies;
     bs.erase(std::remove_if(bs.begin(), bs.end(),
-                            [](const Body& b) { return b.kind == Kind::Player || b.kind == Kind::Ball || b.kind == Kind::Pill; }),
+                            [](const Body& b) {
+                                return b.kind == Kind::Player || b.kind == Kind::Ball || b.kind == Kind::Pill ||
+                                       b.kind == Kind::Enemy;
+                            }),
              bs.end());
-    tEnlarge = tShrink = tSlow = tMega = tMagnet = 0;
+    world.bands.clear();
+    shots.clear();
+    tEnlarge = tShrink = tSlow = tMega = tMagnet = tGun = 0;
     world.gravity = info.gravity0;
     int n = std::max(1, std::min(worldPlayers, MAX_PLAYERS));
     bool vertical = info.playerCenter.x < 400;
@@ -120,7 +151,20 @@ void Game::spawnActors() {
         p.thrust = 12;
         world.add(p);
     }
-    for (const auto& s : info.balls) spawnBall(s);
+    std::vector<int> ballIds;
+    for (const auto& s : info.balls) ballIds.push_back(spawnBall(s));
+    for (const auto& bs : info.bands) {
+        if (bs.a < 0 || bs.a >= int(ballIds.size())) continue;
+        Band band;
+        band.a = ballIds[bs.a];
+        if (bs.b >= 0 && bs.b < int(ballIds.size())) band.b = ballIds[bs.b];
+        else if (bs.brickId > 0 && world.find(bs.brickId)) band.b = bs.brickId;   // tether to a brick
+        else continue;
+        band.rest = bs.rest;
+        band.k = bs.k;
+        band.damp = bs.damp;
+        world.bands.push_back(band);
+    }
 }
 
 int Game::spawnBall(const BallSpawn& s) {
@@ -138,13 +182,15 @@ int Game::spawnBall(const BallSpawn& s) {
     return world.add(b);
 }
 
-void Game::spawnPill(Vec2 pos, Vec2 dir) {
-    static const int weights[PILL_COUNT] = {18, 16, 12, 12, 14, 6, 12};
+void Game::spawnPill(Vec2 pos, Vec2 dir, int forcedType) {
+    int weights[PILL_COUNT] = {18, 16, 12, 12, 14, 6, 12, 0};
+    if (info.enemies) weights[PILL_GUN] = 16;   // lasers only where there are enemies to shoot
     int total = 0;
     for (int w : weights) total += w;
     int r = int(frand(0, float(total)));
     int type = 0;
     while (type < PILL_COUNT - 1 && r >= weights[type]) r -= weights[type++];
+    if (forcedType >= 0) type = forcedType;
     Body p;
     p.kind = Kind::Pill;
     p.shape = Shape::Rect;
@@ -165,6 +211,22 @@ void Game::spawnPill(Vec2 pos, Vec2 dir) {
         p.vel = dir * 160;
     }
     world.add(p);
+}
+
+void Game::spawnEnemy(Vec2 pos) {
+    Body e;
+    e.kind = Kind::Enemy;
+    e.shape = Shape::Circle;
+    e.r = 15;
+    e.pos = pos;
+    e.vel = Vec2(frand(-60, 60), 80);
+    e.invMass = 1.0f / 0.04f;
+    e.damping = 3;
+    e.thrust = 3;      // terminal speed = steering input
+    e.gravScale = 0;
+    e.maxSpeed = 420;
+    e.phase = frand(0, 6.28f);
+    world.add(e);
 }
 
 int Game::bricksLeft() const {
@@ -193,6 +255,10 @@ void Game::update(float dt, const Vec2 inputs[MAX_PLAYERS]) {
             if (b.kind != Kind::Player || !b.alive) continue;
             int i = b.player;
             b.input = (demo || aiPlayers[i]) ? aiInput(b) : inputs[i];
+            if (b.stun > 0) {   // hit by an enemy: the bat can't be steered for a moment
+                b.stun -= dt;
+                b.input = Vec2(0, 0);
+            }
         }
     };
 
@@ -200,9 +266,12 @@ void Game::update(float dt, const Vec2 inputs[MAX_PLAYERS]) {
         case State::Title:
             demoTimer += dt;
             setInputs();
+            updateEnemies();
             updateBatSizes();
             simulate(dt);
-            for (auto* t : {&tEnlarge, &tShrink, &tSlow, &tMega, &tMagnet}) *t = std::max(0.f, *t - dt);
+            updateShots(dt);
+            for (auto* t : {&tEnlarge, &tShrink, &tSlow, &tMega, &tMagnet, &tGun}) *t = std::max(0.f, *t - dt);
+            darkness += (targetDarkness() - darkness) * std::min(1.f, dt * 2.5f);
             if (demoTimer > 35 || bricksLeft() == 0 || (ballsAlive() == 0 && stateTime > 1)) {
                 int next = (level + 1 + int(frand(0, 3))) % levelCount();
                 startDemoLevel(next, 1);
@@ -212,9 +281,12 @@ void Game::update(float dt, const Vec2 inputs[MAX_PLAYERS]) {
             break;
         case State::Playing: {
             setInputs();
+            updateEnemies();
             updateBatSizes();
             simulate(tSlow > 0 ? dt * 0.6f : dt);
-            for (auto* t : {&tEnlarge, &tShrink, &tSlow, &tMega, &tMagnet}) *t = std::max(0.f, *t - dt);
+            updateShots(tSlow > 0 ? dt * 0.6f : dt);
+            for (auto* t : {&tEnlarge, &tShrink, &tSlow, &tMega, &tMagnet, &tGun}) *t = std::max(0.f, *t - dt);
+            darkness += (targetDarkness() - darkness) * std::min(1.f, dt * 2.5f);
             for (auto& b : world.bodies)
                 if (b.kind == Kind::Ball) b.mega = tMega > 0;
             if (!demo) checkProgress();
@@ -222,13 +294,16 @@ void Game::update(float dt, const Vec2 inputs[MAX_PLAYERS]) {
         }
         case State::LevelClear:
             if (stateTime > 2.8f) {
-                if (level + 1 < levelCount()) {
+                if (level < runLast) {
                     loadLevel(level + 1);
                     state = State::Intro;
                     stateTime = 0;
                 } else {
                     state = State::Victory;
                     stateTime = 0;
+                    // back on the title screen, the next set is preselected (after set 6: the complete run)
+                    if (!completeRun()) startSet = std::min(runLast / LEVELS_PER_SET + 1, setChoices() - 1);
+                    menuIndex = 0;
                     if (score > settings.hiscore) { settings.hiscore = score; settingsDirty = true; }
                 }
             }
@@ -272,8 +347,33 @@ void Game::simulate(float dt) {
 }
 
 namespace {
-struct Spawn { bool pill; Vec2 pos, dir; BallSpawn ball; };
+enum class SpawnType { Ball, Pill, Enemy };
+struct Spawn {
+    SpawnType type = SpawnType::Ball;
+    Vec2 pos, dir;
+    BallSpawn ball;
+    int pillType = -1;
+};
 std::vector<Spawn> spawnQueue;
+}
+
+void Game::flushSpawns() {
+    int enemies = 0;
+    for (const auto& b : world.bodies)
+        if (b.kind == Kind::Enemy && b.alive) enemies++;
+    for (const auto& s : spawnQueue) {
+        switch (s.type) {
+            case SpawnType::Pill: spawnPill(s.pos, s.dir, s.pillType); break;
+            case SpawnType::Ball: if (ballsAlive() < MAX_BALLS) spawnBall(s.ball); break;
+            case SpawnType::Enemy: if (enemies < MAX_ENEMIES) { spawnEnemy(s.pos); enemies++; } break;
+        }
+    }
+    spawnQueue.clear();
+}
+
+void Game::removeDead() {
+    auto& bs = world.bodies;
+    bs.erase(std::remove_if(bs.begin(), bs.end(), [](const Body& b) { return !b.alive; }), bs.end());
 }
 
 void Game::processEvents() {
@@ -299,7 +399,11 @@ void Game::processEvents() {
                         brickHit(*ball, *other, ev.speed);
                     } else if (other->kind == Kind::Ball) {
                         sfx(SFX_PUCK, vol * 0.6f, 0.7f);
+                    } else if (other->kind == Kind::Enemy) {
+                        killEnemy(*other, true);
                     }
+                } else if (A->kind == Kind::Enemy || B->kind == Kind::Enemy) {
+                    // enemies bump into bricks, walls and each other: nothing happens
                 } else {
                     Body* br = A->kind == Kind::Brick ? A : B;
                     Body* ot = br == A ? B : A;
@@ -337,6 +441,20 @@ void Game::processEvents() {
                 burst(A->pos, 12, 0xFFA040, 200, 4, 0);
                 break;
             }
+            case EvType::Touch: {
+                Body* O = world.find(ev.b);
+                if (!A->alive || !O || !O->alive) break;
+                if (O->kind == Kind::Enemy) {
+                    killEnemy(*O, false);
+                    A->stun = 1.5f;
+                    A->flash = 0.3f;
+                    sfx(SFX_ZAP);
+                    popText(A->pos + Vec2(0, -30), "STUNNED!", 0x90FF90);
+                } else if (O->deadly) {
+                    batDeath(*A);
+                }
+                break;
+            }
             case EvType::Collect: {
                 Body* P = world.find(ev.b);
                 if (!A->alive || !P) break;
@@ -352,15 +470,8 @@ void Game::processEvents() {
         }
     }
     world.events.clear();
-
-    auto& bs = world.bodies;
-    bs.erase(std::remove_if(bs.begin(), bs.end(), [](const Body& b) { return !b.alive; }), bs.end());
-
-    for (const auto& s : spawnQueue) {
-        if (s.pill) spawnPill(s.pos, s.dir);
-        else if (ballsAlive() < MAX_BALLS) spawnBall(s.ball);
-    }
-    spawnQueue.clear();
+    removeDead();
+    flushSpawns();
 }
 
 void Game::brickHit(Body& ball, Body& brick, float speed) {
@@ -392,6 +503,17 @@ void Game::brickHit(Body& ball, Body& brick, float speed) {
             break;
         case BrickType::Puck:
             sfx(SFX_PUCK, vol);
+            break;
+        case BrickType::Skull:
+        case BrickType::Barrier:
+            brick.flash = 0.15f;
+            sfx(SFX_METAL, vol * 0.6f, 0.7f);
+            break;
+        case BrickType::Switch:
+            if (brick.hitCooldown <= 0) {
+                brick.hitCooldown = 0.5f;
+                toggleGroup(brick.group, brick.pos);
+            }
             break;
         default: {
             if (speed >= 9999) {
@@ -434,9 +556,39 @@ void Game::destroyBrick(Body& brick, Body* ball) {
     if (!quiet) Audio::play(SFX_BREAK, 0.8f, 0.9f + 0.06f * combo);
 
     if (brick.btype == BrickType::Explosive) explode(brick.pos);
+    if (brick.btype == BrickType::BigBall) {
+        Spawn s;
+        s.type = SpawnType::Ball;
+        s.ball = info.balls.empty() ? BallSpawn{} : info.balls[0];
+        s.ball.pos = brick.pos;
+        s.ball.r = 26;
+        s.ball.mass = 0.1f;
+        s.ball.vel = Vec2(frand(-200, 200), 150);
+        spawnQueue.push_back(s);
+        popText(brick.pos + Vec2(0, -24), "BIG BALL", 0xFFB060);
+    }
+    if (brick.btype == BrickType::Nest) {
+        Spawn s;
+        s.type = SpawnType::Enemy;
+        s.pos = brick.pos;
+        spawnQueue.push_back(s);
+        burst(brick.pos, 16, 0x70FF60, 240, 5, 0);
+        if (frand() < 0.4f) {   // a laser to fight back with
+            Spawn p;
+            p.type = SpawnType::Pill;
+            p.pos = brick.pos + Vec2(0, 20);
+            p.dir = (info.playerCenter - brick.pos).norm();
+            p.pillType = PILL_GUN;
+            spawnQueue.push_back(p);
+        }
+    }
+    if (brick.btype == BrickType::Bulb) {
+        burst(brick.pos, 18, 0xFFF4C0, 300, 3, 600);
+        if (!quiet) Audio::play(SFX_METAL, 0.6f, 1.8f);
+    }
     if (brick.btype == BrickType::Multi) {
         Spawn s;
-        s.pill = false;
+        s.type = SpawnType::Ball;
         s.ball = info.balls.empty() ? BallSpawn{} : info.balls[0];
         s.ball.pos = brick.pos;
         float a = frand(0, 2 * PI_F);
@@ -449,7 +601,7 @@ void Game::destroyBrick(Body& brick, Body* ball) {
         if (b.kind == Kind::Pill && b.alive) pills++;
     if (info.pills && pills < 3 && frand() < 0.12f) {
         Spawn s;
-        s.pill = true;
+        s.type = SpawnType::Pill;
         s.pos = brick.pos;
         Vec2 toPlayer = info.playerCenter - brick.pos;
         s.dir = toPlayer.norm();
@@ -495,6 +647,7 @@ void Game::applyPill(int type, Body& player) {
         case PILL_MEGA: tMega = 10; break;
         case PILL_MAGNET: tMagnet = 12; break;
         case PILL_LIFE: lives++; break;
+        case PILL_GUN: tGun = 12; gunCooldown = 0; break;
         case PILL_MULTI: {
             int n = ballsAlive();
             int made = 0;
@@ -503,7 +656,7 @@ void Game::applyPill(int type, Body& player) {
                 for (int k = -1; k <= 1; k += 2) {
                     if (n + made >= MAX_BALLS) break;
                     Spawn s;
-                    s.pill = false;
+                    s.type = SpawnType::Ball;
                     s.ball = info.balls.empty() ? BallSpawn{} : info.balls[0];
                     s.ball.pos = b.pos;
                     Vec2 v = b.vel;
@@ -715,6 +868,132 @@ Vec2 Game::aiInput(const Body& p) const {
     return in;
 }
 
+void Game::killEnemy(Body& e, bool scored) {
+    if (!e.alive) return;
+    e.alive = false;
+    burst(e.pos, 22, 0x70FF60, 320, 5, 0);
+    burst(e.pos, 8, 0xFFFFFF, 200, 3, 0);
+    if (state != State::Title) Audio::play(SFX_ZAP, 0.7f, 1.4f);
+    if (scored) addScore(200, e.pos);
+}
+
+// a bat touched a deadly brick: it blows up and the player loses a life (all balls are lost)
+void Game::batDeath(Body& bat) {
+    if (ballsAlive() == 0) return; // already dying
+    bool quiet = state == State::Title;
+    if (!quiet) Audio::play(SFX_EXPLODE);
+    shake = std::max(shake, 0.4f);
+    burst(bat.pos, 40, playerColor(bat.color), 450, 7, 300);
+    burst(bat.pos, 20, 0xFFE080, 300, 5, 200);
+    popText(bat.pos + Vec2(0, -30), "CRASH!", 0xFF6060, true);
+    for (auto& b : world.bodies) {
+        if (b.kind != Kind::Ball || !b.alive) continue;
+        b.alive = false;
+        Ghost g;
+        g.body = b;
+        g.body.alive = true;
+        g.dur = 0.3f;
+        ghosts.push_back(g);
+    }
+}
+
+void Game::toggleGroup(int group, Vec2 pos) {
+    bool on = false;
+    for (auto& b : world.bodies) {
+        if (b.btype == BrickType::Barrier && b.group == group) {
+            b.solid = !b.solid;
+            on = b.solid;
+            b.flash = 0.3f;
+        }
+        if (b.btype == BrickType::Switch && b.group == group) b.flash = 0.4f;
+    }
+    if (state != State::Title) Audio::play(SFX_SWITCH, 1.0f, on ? 1.2f : 0.8f);
+    popText(pos + Vec2(0, -28), on ? "ON" : "OFF", on ? 0x80FFFF : 0xFF9090);
+}
+
+// enemies home in on the closest bat, wobbling a little
+void Game::updateEnemies() {
+    for (auto& e : world.bodies) {
+        if (e.kind != Kind::Enemy || !e.alive) continue;
+        const Body* best = nullptr;
+        float bd = 1e9f;
+        for (const auto& p : world.bodies) {
+            if (p.kind != Kind::Player) continue;
+            float d = (p.pos - e.pos).len();
+            if (d < bd) { bd = d; best = &p; }
+        }
+        Vec2 dir = best ? (best->pos - e.pos).norm() : Vec2(0, 1);
+        float wobble = std::sin(world.time * 3.0f + e.phase) * 110.f;
+        e.input = dir * 230.f + dir.perp() * wobble;
+    }
+}
+
+// laser power-up: bats fire upwards automatically
+void Game::updateShots(float dt) {
+    bool quiet = state == State::Title;
+    if (tGun > 0) {
+        gunCooldown -= dt;
+        if (gunCooldown <= 0) {
+            gunCooldown = 0.3f;
+            for (const auto& p : world.bodies) {
+                if (p.kind != Kind::Player) continue;
+                if (p.shape == Shape::Capsule) {
+                    shots.push_back({p.pos + Vec2(-p.hw, -p.r - 4)});
+                    shots.push_back({p.pos + Vec2(p.hw, -p.r - 4)});
+                } else {
+                    shots.push_back({p.pos + Vec2(0, -p.r - 4)});
+                }
+            }
+            if (!quiet) Audio::play(SFX_LASER, 0.5f);
+        }
+    }
+    if (shots.empty()) return;
+    const float speed = 1100.f;
+    for (auto& sh : shots) {
+        if (!sh.alive) continue;
+        // move in small steps so thin bricks can't be skipped
+        float dist = speed * dt;
+        int n = std::max(1, int(dist / 8.f));
+        for (int k = 0; k < n && sh.alive; k++) {
+            sh.pos.y -= dist / n;
+            if (sh.pos.y < world.top) { sh.alive = false; break; }
+            for (auto& b : world.bodies) {
+                if (!b.alive || !b.solid) continue;
+                if (b.kind == Kind::Enemy) {
+                    if ((b.pos - sh.pos).len() < b.r + 5) { killEnemy(b, true); sh.alive = false; break; }
+                    continue;
+                }
+                if (b.kind != Kind::Brick || !pointInBody(b, sh.pos, 2)) continue;
+                sh.alive = false;
+                if (breakable(b)) {
+                    b.hp--;
+                    b.flash = 0.12f;
+                    if (b.hp <= 0) destroyBrick(b, nullptr);
+                    else if (!quiet) Audio::play(SFX_BRICK, 0.6f, 1.2f);
+                } else if (b.btype == BrickType::Switch && b.hitCooldown <= 0) {
+                    b.hitCooldown = 0.5f;
+                    toggleGroup(b.group, b.pos);
+                } else {
+                    b.flash = 0.1f;
+                }
+                burst(sh.pos, 4, 0xFFF080, 150, 3, 0);
+                break;
+            }
+        }
+    }
+    shots.erase(std::remove_if(shots.begin(), shots.end(), [](const Shot& s) { return !s.alive; }), shots.end());
+    removeDead();
+    flushSpawns();
+}
+
+float Game::targetDarkness() const {
+    if (bulbsTotal <= 0) return 0;
+    int left = 0;
+    for (const auto& b : world.bodies)
+        if (b.btype == BrickType::Bulb && b.alive) left++;
+    return 0.93f * (1.0f - float(left) / bulbsTotal);
+}
+
 // ------------------------------------------------------------------------------------------
 
 std::string Game::titleItem(int i) const {
@@ -722,7 +1001,15 @@ std::string Game::titleItem(int i) const {
     switch (i) {
         case 0: return "Start Game";
         case 1: std::snprintf(buf, sizeof buf, "Players: %d", numPlayers); return buf;
-        case 2: std::snprintf(buf, sizeof buf, "Start Level: %d", startLevel + 1); return buf;
+        case 2: {
+            int first, last;
+            setRange(startSet, first, last);
+            if (startSet >= levelSetCount())
+                std::snprintf(buf, sizeof buf, "Level Set: Complete  (%d-%d)", first + 1, last + 1);
+            else
+                std::snprintf(buf, sizeof buf, "Level Set: %d  (%d-%d)", startSet + 1, first + 1, last + 1);
+            return buf;
+        }
         case 3: std::snprintf(buf, sizeof buf, "Mouse Speed: %.2f", settings.mouseGain); return buf;
         case 4: return settings.sound ? "Sound: On" : "Sound: Off";
         case 5: return "Quit";
@@ -749,10 +1036,10 @@ void Game::action(Action a, int) {
                 int d = a == Action::Left ? -1 : 1;
                 switch (menuIndex) {
                     case 0:
-                        if (a == Action::Confirm) startGame(numPlayers, startLevel);
+                        if (a == Action::Confirm) startGame(numPlayers, startSet);
                         break;
                     case 1: numPlayers = (numPlayers - 1 + d + MAX_PLAYERS) % MAX_PLAYERS + 1; break;
-                    case 2: startLevel = (startLevel + d + settings.maxLevel) % settings.maxLevel; break;
+                    case 2: startSet = (startSet + d + setChoices()) % setChoices(); break;
                     case 3:
                         settings.mouseGain = clampf(settings.mouseGain + 0.25f * d, 0.25f, 3.0f);
                         settingsDirty = true;

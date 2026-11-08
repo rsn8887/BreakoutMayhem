@@ -176,10 +176,11 @@ bool sinkable(const Body& b) { return b.kind == Kind::Ball || b.kind == Kind::Pi
 // which pairs interact at all
 bool interacts(const Body& A, const Body& B) {
     if (!A.dynamic() && !B.dynamic()) return false;
+    if (!A.solid || !B.solid) return false;
     Kind ka = A.kind, kb = B.kind;
     if (ka == Kind::Pill || kb == Kind::Pill) {
         const Body& o = (ka == Kind::Pill) ? B : A;
-        return o.kind == Kind::Brick || o.kind == Kind::Player; // player = collect
+        return o.kind == Kind::Brick || o.kind == Kind::Player; // player = collect (enemies: no)
     }
     if ((ka == Kind::Player && isPuck(B)) || (kb == Kind::Player && isPuck(A))) return false;
     return true;
@@ -191,6 +192,7 @@ Material material(const Body& A, const Body& B) {
     auto has = [&](Kind k) { return A.kind == k || B.kind == k; };
     const Body* brick = A.kind == Kind::Brick ? &A : (B.kind == Kind::Brick ? &B : nullptr);
     if (has(Kind::Pill)) return {0.5f, 0.3f};
+    if (has(Kind::Enemy)) return {0.8f, 0.0f};
     if (A.kind == Kind::Ball && B.kind == Kind::Ball) return {1.0f, 0.0f};
     if (has(Kind::Ball) && has(Kind::Player)) return {0.97f, 0.5f}; // grippy bat: swipe to steer
     if (A.kind == Kind::Player && B.kind == Kind::Player) return {0.3f, 0.0f};
@@ -226,8 +228,13 @@ Vec2 pointVel(const Body& b, Vec2 p, Vec2 outN) {
 
 bool megaSmash(const Body& ball, const Body& brick) {
     if (ball.kind != Kind::Ball || !ball.mega || brick.kind != Kind::Brick) return false;
-    return brick.btype == BrickType::Normal || brick.btype == BrickType::Explosive ||
-           brick.btype == BrickType::Multi;
+    switch (brick.btype) {
+        case BrickType::Normal: case BrickType::Explosive: case BrickType::Multi: case BrickType::BigBall:
+        case BrickType::Magnet: case BrickType::Nest: case BrickType::Bulb:
+            return true;
+        default:
+            return false;
+    }
 }
 
 } // namespace
@@ -253,6 +260,7 @@ bool pointInBody(const Body& b, Vec2 p, float pad) {
 
 void World::clear() {
     bodies.clear();
+    bands.clear();
     fields.clear();
     holes.clear();
     portals.clear();
@@ -290,7 +298,39 @@ void World::step(float dt) {
 }
 
 void World::integrate(float dt) {
-    for (auto& b : bodies) {
+    // rubber bands
+    bandAcc.assign(bodies.size(), Vec2(0, 0));
+    if (!bands.empty()) {
+        auto indexOf = [&](int id) -> int {
+            for (size_t i = 0; i < bodies.size(); i++)
+                if (bodies[i].id == id && bodies[i].alive) return int(i);
+            return -1;
+        };
+        for (auto it = bands.begin(); it != bands.end();) {
+            int ia = indexOf(it->a), ib = indexOf(it->b);
+            if (ia < 0 || ib < 0) { it = bands.erase(it); continue; } // a body is gone: the band snaps
+            Body& A = bodies[ia];
+            Body& B = bodies[ib];
+            Vec2 d = B.pos - A.pos;
+            float L = d.len();
+            if (L > it->rest && L > 1e-3f) {
+                Vec2 dir = d / L;
+                float stretchSpeed = dot(B.vel - A.vel, dir);
+                float f = it->k * (L - it->rest) + it->damp * stretchSpeed;
+                if (f > 0) {
+                    bandAcc[ia] += dir * (f * A.invMass);
+                    bandAcc[ib] -= dir * (f * B.invMass);
+                }
+            }
+            ++it;
+        }
+    }
+    magnets.clear();
+    for (size_t i = 0; i < bodies.size(); i++)
+        if (bodies[i].alive && bodies[i].magnet > 0) magnets.push_back(i);
+
+    for (size_t bi = 0; bi < bodies.size(); bi++) {
+        Body& b = bodies[bi];
         if (!b.alive) continue;
         if (b.hitCooldown > 0) b.hitCooldown -= dt;
         if (b.flash > 0) b.flash -= dt;
@@ -311,8 +351,8 @@ void World::integrate(float dt) {
         if (!b.dynamic()) continue;
 
         bool isPlayer = b.kind == Kind::Player;
-        Vec2 acc = gravity * b.gravScale - b.vel * b.damping;
-        if (isPlayer) acc += b.input * b.thrust;
+        Vec2 acc = gravity * b.gravScale - b.vel * b.damping + bandAcc[bi];
+        if (isPlayer || b.kind == Kind::Enemy) acc += b.input * b.thrust;
 
         for (const auto& f : fields) {
             if (isPlayer && !f.affectsPlayers) continue;
@@ -352,11 +392,11 @@ void World::integrate(float dt) {
             }
         }
         if (b.kind == Kind::Ball) {
-            for (const auto& p : bodies) {
-                if (p.kind != Kind::Player || p.magnet <= 0 || !p.alive) continue;
+            for (size_t mi : magnets) {
+                const Body& p = bodies[mi];
                 Vec2 d = p.pos - b.pos;
                 float dist = d.len();
-                if (dist < 260 && dist > 1) acc += d / dist * (p.magnet * (1 - dist / 260));
+                if (dist < p.magnetR && dist > 1) acc += d / dist * (p.magnet * (1 - dist / p.magnetR));
             }
         }
         if (b.spring) {
@@ -384,6 +424,7 @@ void World::walls() {
             case Kind::Ball: e = wallRestitution; break;
             case Kind::Player: e = 0.0f; break;
             case Kind::Pill: e = 0.5f; break;
+            case Kind::Enemy: e = 0.6f; break;
             case Kind::Brick: e = isPuck(b) ? 0.85f : 0.3f; break;
         }
         float hitSpeed = 0;
@@ -448,6 +489,18 @@ void World::collisions(bool firstPass) {
                     events.push_back(ev);
                 }
                 continue;
+            }
+            // bats touching enemies or deadly bricks: the game decides what happens
+            if ((A.kind == Kind::Player && (B.kind == Kind::Enemy || B.deadly)) ||
+                (B.kind == Kind::Player && (A.kind == Kind::Enemy || A.deadly))) {
+                if (firstPass) {
+                    PhysEvent ev{EvType::Touch};
+                    ev.a = A.kind == Kind::Player ? A.id : B.id;
+                    ev.b = A.kind == Kind::Player ? B.id : A.id;
+                    ev.pos = c.p;
+                    events.push_back(ev);
+                }
+                if (A.kind == Kind::Enemy || B.kind == Kind::Enemy) continue;
             }
             // mega ball ploughs through breakable bricks
             if (megaSmash(A, B) || megaSmash(B, A)) {
