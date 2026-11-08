@@ -18,8 +18,8 @@ It uses hand-coded, force-based physics:
 
 - 1280×720, 20 levels each built around a different physics idea
 - capsule bat with rounded ends: hits near an end deflect the ball, Arkanoid-style
-- up to 4 simultaneous players (mouse, keyboard, gamepads, Switch / Vita touch screen)
-- runs on Linux, macOS, Windows, Nintendo Switch and PS Vita
+- up to 4 simultaneous players (mouse, keyboard, gamepads, Switch touch screen)
+- runs on Linux, macOS, Windows and Nintendo Switch
 - power-ups that are physical objects (they fall, drift, bounce and can be sucked into holes)
 - combo multiplier: every brick broken without touching a bat raises the multiplier (up to x8)
 - procedurally generated, shaded, anti-aliased 90s-style graphics (no image files)
@@ -33,7 +33,7 @@ It uses hand-coded, force-based physics:
 | Player 2 | arrow keys (+ Right Shift turbo), or gamepad 2 (in a 1-player game the arrows also move player 1) |
 | Players 3–4 | gamepads 3 and 4 |
 | Gamepad | left stick / D-pad move, any face button or trigger = turbo, Start/+ = pause |
-| Switch / Vita | as gamepad; touch screen (on the Vita front or rear touch pad): drag to move the bat, tap to continue |
+| Switch | as gamepad; touch screen: drag to move the bat, tap to continue |
 | Esc / P | pause menu |
 | F, F11, Alt+Enter | toggle fullscreen |
 | K / L | mouse sensitivity down / up |
@@ -89,21 +89,6 @@ docker run --rm -v "$PWD":/work -w /work devkitpro/devkita64 \
 
 Copy `build-switch/BreakoutMayhem.nro` to `/switch/` on the SD card. Settings and the high score are stored in
 `/switch/BreakoutMayhem/settings.txt`.
-
-### PS Vita (VitaSDK)
-
-Needs VitaSDK with its `sdl2` and `sdl2_ttf` packages (`vdpm sdl2 sdl2_ttf`):
-
-```sh
-cmake -S BreakoutMayhem -B build-vita -DPLATFORM=VITA
-cmake --build build-vita -j
-```
-
-Install `build-vita/BreakoutMayhem.vpk` with VitaShell (title ID `RSNB00001`). Settings and the high score are stored in
-`ux0:data/BreakoutMayhem/settings.txt`.
-
-The Vita renders the game at 1280×720 into a texture and scales it down to the 960×544 screen (960×540 with
-2-pixel bars to keep 16:9).
 
 ## Source layout
 

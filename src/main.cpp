@@ -18,10 +18,6 @@ namespace {
 
 SDL_Window* window = nullptr;
 SDL_Renderer* sdlRenderer = nullptr;
-// When the screen is smaller than 1280x720 (PS Vita: 960x544) the game renders into a 1280x720
-// texture which is then scaled down (with linear filtering) to the screen.
-SDL_Texture* target = nullptr;
-int winW = SCREEN_W, winH = SCREEN_H;
 Renderer renderer;
 Game game;
 std::string settingsPath;
@@ -39,8 +35,6 @@ const float MOUSE_SCALE = 1.0f;
 std::string dataPath(const char* file) {
 #if defined(__SWITCH__)
     return std::string("romfs:/data/") + file;
-#elif defined(__vita__)
-    return std::string("app0:data/") + file;
 #else
     char* base = SDL_GetBasePath();
     std::string p = base ? base : "./";
@@ -54,9 +48,6 @@ void loadSettings() {
     makeDir("sdmc:/switch");
     makeDir("sdmc:/switch/BreakoutMayhem");
     settingsPath = "sdmc:/switch/BreakoutMayhem/settings.txt";
-#elif defined(__vita__)
-    makeDir("ux0:data/BreakoutMayhem");
-    settingsPath = "ux0:data/BreakoutMayhem/settings.txt";
 #else
     char* pref = SDL_GetPrefPath("rsn8887", "BreakoutMayhem");
     settingsPath = std::string(pref ? pref : "./") + "settings.txt";
@@ -85,7 +76,7 @@ void saveSettings() {
 }
 
 void setFullscreen(bool on) {
-#if !defined(__SWITCH__) && !defined(__vita__)
+#ifndef __SWITCH__
     SDL_SetWindowFullscreen(window, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
 #endif
     game.settings.fullscreen = on;
@@ -189,11 +180,20 @@ void menuNavFromSticks(float dt) {
     }
 }
 
-void titleHover(int y) {
-    if (game.state != State::Title) return;
-    if (target) y = y * SCREEN_H / winH; // window -> 1280x720 game coordinates
-    int i = (y - 330) / 44;
-    if (y >= 330 && i >= 0 && i < game.titleItemCount() && i != game.menuIndex) game.menuIndex = i;
+// menu item under the mouse (title and pause menus, same layout as Renderer::drawOverlay), or -1
+int menuItemAt(int x, int y) {
+    int top, count, left, right;
+    if (game.state == State::Title) { top = 330; count = game.titleItemCount(); left = 390; right = 890; }
+    else if (game.state == State::Paused) { top = 318; count = game.pauseItemCount(); left = 440; right = 840; }
+    else return -1;
+    if (x < left || x > right || y < top) return -1;
+    int i = (y - top) / 44;
+    return i < count ? i : -1;
+}
+
+void menuHover(int x, int y) {
+    int i = menuItemAt(x, y);
+    if (i >= 0) game.menuIndex = i;
 }
 
 void handleEvent(const SDL_Event& e, bool& running) {
@@ -238,15 +238,18 @@ void handleEvent(const SDL_Event& e, bool& running) {
         }
         case SDL_MOUSEMOTION:
             if (SDL_GetRelativeMouseMode()) mouseRel += Vec2(float(e.motion.xrel), float(e.motion.yrel));
-            else titleHover(e.motion.y);
+            else menuHover(e.motion.x, e.motion.y);
             break;
         case SDL_MOUSEBUTTONDOWN:
             if (e.button.which == SDL_TOUCH_MOUSEID) break;
             if (e.button.button == SDL_BUTTON_LEFT) {
-                if (game.state == State::Title) {
-                    titleHover(e.button.y);
-                    int y = target ? e.button.y * SCREEN_H / winH : e.button.y;
-                    if (y < 330 || y > 330 + 44 * game.titleItemCount()) game.menuIndex = 0;
+                int item = menuItemAt(e.button.x, e.button.y);
+                if (item >= 0) {
+                    game.menuIndex = item;
+                } else if (game.state == State::Title) {
+                    game.menuIndex = 0;   // click anywhere else on the title screen: start the game
+                } else if (game.state == State::Paused) {
+                    break;                // clicks outside the pause menu do nothing
                 }
                 game.action(Action::Confirm);
             } else if (e.button.button == SDL_BUTTON_RIGHT) {
@@ -260,7 +263,7 @@ void handleEvent(const SDL_Event& e, bool& running) {
             if (game.state == State::Title) game.menuIndex = 0;
             if (game.state != State::Playing) game.action(Action::Confirm);
             break;
-        case SDL_FINGERMOTION: // touch screen, and on the Vita also the rear touch pad
+        case SDL_FINGERMOTION:
             if (game.state == State::Playing) mouseRel += Vec2(e.tfinger.dx * SCREEN_W, e.tfinger.dy * SCREEN_H);
             break;
         case SDL_CONTROLLERDEVICEADDED: openPad(e.cdevice.which); break;
@@ -288,23 +291,10 @@ void handleEvent(const SDL_Event& e, bool& running) {
 bool initVideo(bool software) {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
     Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
-    bool downscale = SDL_getenv("BM_VITA_PREVIEW") != nullptr; // desktop preview of the Vita path
-#if defined(__SWITCH__)
+#ifdef __SWITCH__
     flags = SDL_WINDOW_FULLSCREEN;
-#elif defined(__vita__)
-    flags = SDL_WINDOW_FULLSCREEN;
-    downscale = true;
-    // SDL's native GXM renderer has precompiled shaders, so no libshacccg.suprx is needed on the console
-    // (the OpenGL ES renderer would need it to compile shaders at runtime)
-    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "VITA gxm");
 #endif
-    if (downscale) {
-        winW = 960;
-        winH = 544;
-        if (!SDL_getenv("BM_VITA_PREVIEW")) flags = SDL_WINDOW_FULLSCREEN;
-        else flags = 0;
-    }
-    window = SDL_CreateWindow("Breakout Mayhem", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW, winH, flags);
+    window = SDL_CreateWindow("Breakout Mayhem", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_W, SCREEN_H, flags);
     if (!window) {
         SDL_Log("SDL_CreateWindow: %s", SDL_GetError());
         return false;
@@ -315,35 +305,10 @@ bool initVideo(bool software) {
         SDL_Log("SDL_CreateRenderer: %s", SDL_GetError());
         return false;
     }
-    if (downscale) {
-        target = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
-        if (!target) {
-            SDL_Log("Render target not supported (%s), drawing directly", SDL_GetError());
-            SDL_RenderSetLogicalSize(sdlRenderer, SCREEN_W, SCREEN_H);
-        } else {
-            SDL_SetTextureScaleMode(target, SDL_ScaleModeLinear);
-        }
-    } else {
-        SDL_RenderSetLogicalSize(sdlRenderer, SCREEN_W, SCREEN_H);
-    }
+    SDL_RenderSetLogicalSize(sdlRenderer, SCREEN_W, SCREEN_H);
     return true;
 }
 
-// draw one frame: straight to the window, or into the 1280x720 target and then scaled to the screen
-void drawFrame() {
-    if (target) SDL_SetRenderTarget(sdlRenderer, target);
-    renderer.draw(game);
-    if (target) {
-        SDL_SetRenderTarget(sdlRenderer, nullptr);
-        SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 255);
-        SDL_RenderClear(sdlRenderer);
-        // keep 16:9: 960x544 -> 960x540 with 2 px bars
-        int w = winW, h = winW * SCREEN_H / SCREEN_W;
-        if (h > winH) { h = winH; w = winH * SCREEN_W / SCREEN_H; }
-        SDL_Rect dst{(winW - w) / 2, (winH - h) / 2, w, h};
-        SDL_RenderCopy(sdlRenderer, target, nullptr, &dst);
-    }
-}
 
 // --shot <level|0=title|tN=title over level N|-N=intro> <file.bmp> [seconds] [players]: renders a screenshot (used for testing)
 int screenshot(int argc, char** argv) {
@@ -371,8 +336,8 @@ int screenshot(int argc, char** argv) {
         if (lvl > 0 && game.state == State::Intro) game.state = State::Playing; // keep the demo running
     }
     if (lvl < 0) { game.state = State::Intro; game.stateTime = 0.1f; }
-    drawFrame();
-    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, winW, winH, 32, SDL_PIXELFORMAT_ARGB8888);
+    renderer.draw(game);
+    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_W, SCREEN_H, 32, SDL_PIXELFORMAT_ARGB8888);
     SDL_RenderReadPixels(sdlRenderer, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch);
     SDL_SaveBMP(s, file);
     SDL_FreeSurface(s);
@@ -423,8 +388,6 @@ int main(int argc, char** argv) {
     if (!renderer.init(sdlRenderer, dataPath("Poppins-Bold.ttf"))) return 1;
 #if defined(__SWITCH__)
     renderer.helpLine = "Left stick / D-Pad: move bat     A/B/X/Y: turbo     +: pause     Touch: drag the bat";
-#elif defined(__vita__)
-    renderer.helpLine = "Left stick / D-Pad: move bat     Face buttons: turbo     START: pause     Front/rear touch: drag the bat";
 #else
     renderer.helpLine = "P1: Mouse / WASD + Ctrl / Pad 1     P2: Arrows + Shift / Pad 2     P3-4: Pads     F: Fullscreen";
 #endif
@@ -464,14 +427,13 @@ int main(int argc, char** argv) {
             game.settingsDirty = false;
         }
 
-        drawFrame();
+        renderer.draw(game);
         SDL_RenderPresent(sdlRenderer);
     }
 
     saveSettings();
     Audio::shutdown();
     renderer.shutdown();
-    if (target) SDL_DestroyTexture(target);
     for (auto& p : pads)
         if (p) SDL_GameControllerClose(p);
     SDL_DestroyRenderer(sdlRenderer);

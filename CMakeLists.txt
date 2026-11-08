@@ -4,22 +4,15 @@ cmake_minimum_required(VERSION 3.16)
 #   Desktop (Linux / macOS / Windows MSYS2):  cmake -S BreakoutMayhem -B build && cmake --build build
 #   macOS app bundle:                         cmake -S BreakoutMayhem -B build-mac -DMACOS_BUNDLE=ON
 #   Nintendo Switch (devkitPro):              cmake -S BreakoutMayhem -B build-switch -DPLATFORM=SWITCH
-#   PS Vita (VitaSDK):                        cmake -S BreakoutMayhem -B build-vita -DPLATFORM=VITA
 # Always build out of the source tree.
 
-set(PLATFORM "DESKTOP" CACHE STRING "DESKTOP, SWITCH or VITA")
+set(PLATFORM "DESKTOP" CACHE STRING "DESKTOP or SWITCH")
 
 if(PLATFORM STREQUAL "SWITCH" AND NOT CMAKE_TOOLCHAIN_FILE)
     if(NOT DEFINED ENV{DEVKITPRO})
         set(ENV{DEVKITPRO} /opt/devkitpro)
     endif()
     set(CMAKE_TOOLCHAIN_FILE "$ENV{DEVKITPRO}/cmake/Switch.cmake")
-endif()
-if(PLATFORM STREQUAL "VITA" AND NOT CMAKE_TOOLCHAIN_FILE)
-    if(NOT DEFINED ENV{VITASDK})
-        set(ENV{VITASDK} /usr/local/vitasdk)
-    endif()
-    set(CMAKE_TOOLCHAIN_FILE "$ENV{VITASDK}/share/vita.toolchain.cmake")
 endif()
 
 project(BreakoutMayhem VERSION 1.0.0 LANGUAGES C CXX)
@@ -70,35 +63,6 @@ if(PLATFORM STREQUAL "SWITCH")
         NACP BreakoutMayhem.nacp
         ICON ${CMAKE_SOURCE_DIR}/res/icon256.jpg
         ROMFS ${ROMFS_DIR})
-elseif(PLATFORM STREQUAL "VITA")
-    # ---------------------------------------------------------------- PS Vita
-    include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
-    set(VITA_APP_NAME "Breakout Mayhem")
-    set(VITA_TITLEID "RSNB00001")
-    set(VITA_VERSION "01.00")
-    set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12") # extended memory mode
-
-    add_executable(BreakoutMayhem ${SOURCES})
-    target_compile_options(BreakoutMayhem PRIVATE -O2)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(VITALIBS REQUIRED sdl2 SDL2_ttf)
-    target_include_directories(BreakoutMayhem PRIVATE ${VITALIBS_STATIC_INCLUDE_DIRS})
-    # SDL2's (unused) OpenGL ES support references vitashark, which needs SceShaccCgExt to link.
-    # The game forces SDL's GXM renderer, so libshacccg.suprx is never loaded at runtime.
-    target_link_libraries(BreakoutMayhem PRIVATE ${VITALIBS_STATIC_LDFLAGS}
-        SceShaccCgExt taihen_stub SceShaccCg_stub SceKernelModulemgr_stub ScePower_stub)
-
-    vita_create_self(eboot.bin BreakoutMayhem UNSAFE)
-    vita_create_vpk(BreakoutMayhem.vpk ${VITA_TITLEID} eboot.bin
-        VERSION ${VITA_VERSION}
-        NAME ${VITA_APP_NAME}
-        FILE ${CMAKE_SOURCE_DIR}/res/vita/icon0.png sce_sys/icon0.png
-        FILE ${CMAKE_SOURCE_DIR}/res/vita/pic0.png sce_sys/pic0.png
-        FILE ${CMAKE_SOURCE_DIR}/res/vita/bg.png sce_sys/livearea/contents/bg.png
-        FILE ${CMAKE_SOURCE_DIR}/res/vita/startup.png sce_sys/livearea/contents/startup.png
-        FILE ${CMAKE_SOURCE_DIR}/res/vita/template.xml sce_sys/livearea/contents/template.xml
-        FILE ${CMAKE_SOURCE_DIR}/data/Poppins-Bold.ttf data/Poppins-Bold.ttf
-        FILE ${CMAKE_SOURCE_DIR}/data/Poppins-OFL.txt data/Poppins-OFL.txt)
 else()
     # ---------------------------------------------------------------- Desktop
     find_package(SDL2 CONFIG QUIET)

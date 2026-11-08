@@ -1,6 +1,7 @@
 // Breakout Mayhem - hand-coded physics
 #include "physics.h"
 #include <cmath>
+#include <algorithm>
 
 namespace {
 
@@ -184,14 +185,14 @@ bool interacts(const Body& A, const Body& B) {
     return true;
 }
 
-struct Material { float e, fric; };
+struct Material { float e, mu; }; // restitution, Coulomb friction coefficient
 
 Material material(const Body& A, const Body& B) {
     auto has = [&](Kind k) { return A.kind == k || B.kind == k; };
     const Body* brick = A.kind == Kind::Brick ? &A : (B.kind == Kind::Brick ? &B : nullptr);
-    if (has(Kind::Pill)) return {0.5f, 0.1f};
+    if (has(Kind::Pill)) return {0.5f, 0.3f};
     if (A.kind == Kind::Ball && B.kind == Kind::Ball) return {1.0f, 0.0f};
-    if (has(Kind::Ball) && has(Kind::Player)) return {0.97f, 0.5f};
+    if (has(Kind::Ball) && has(Kind::Player)) return {0.97f, 0.5f}; // grippy bat: swipe to steer
     if (A.kind == Kind::Player && B.kind == Kind::Player) return {0.3f, 0.0f};
     if (has(Kind::Player) && brick) {
         if (brick->btype == BrickType::Bumper) return {0.6f, 0.0f};
@@ -199,16 +200,16 @@ Material material(const Body& A, const Body& B) {
     }
     if (has(Kind::Ball) && brick) {
         switch (brick->btype) {
-            case BrickType::Puck: return {0.95f, 0.05f};
-            case BrickType::Conveyor: return {0.85f, 0.35f};
-            case BrickType::Rail: return {0.92f, 0.12f};
+            case BrickType::Puck: return {0.95f, 0.1f};
+            case BrickType::Conveyor: return {0.85f, 0.6f};
+            case BrickType::Rail: return {0.92f, 0.2f};
             default: return {1.0f, 0.0f};
         }
     }
     // brick vs brick (pucks, pendulums)
     if (A.kind == Kind::Brick && B.kind == Kind::Brick) {
-        if (isPuck(A) && isPuck(B)) return {0.95f, 0.02f};
-        return {0.8f, 0.05f};
+        if (isPuck(A) && isPuck(B)) return {0.95f, 0.05f};
+        return {0.8f, 0.1f};
     }
     return {0.5f, 0.0f};
 }
@@ -414,15 +415,19 @@ void World::walls() {
 }
 
 void World::collisions(bool firstPass) {
-    // only pairs with at least one moving body can collide: loop over the few dynamic bodies
+    // Same pair order as a plain i<j double loop, but static/static pairs (which never interact) are
+    // skipped without being visited: a static body is only paired with the moving bodies after it.
     const size_t n = bodies.size();
     dynIdx.clear();
     for (size_t i = 0; i < n; i++)
         if (bodies[i].alive && bodies[i].dynamic()) dynIdx.push_back(i);
-    for (size_t d : dynIdx) {
-        for (size_t k = 0; k < n; k++) {
-            if (k == d || (k < d && bodies[k].dynamic())) continue; // dynamic pairs only once
-            size_t i = std::min(d, k), j = std::max(d, k);
+    for (size_t i = 0; i < n; i++) {
+        const bool iDyn = bodies[i].dynamic();
+        size_t start = 0;
+        if (!iDyn) start = size_t(std::upper_bound(dynIdx.begin(), dynIdx.end(), i) - dynIdx.begin());
+        const size_t count = iDyn ? n - (i + 1) : dynIdx.size() - start;
+        for (size_t k = 0; k < count; k++) {
+            const size_t j = iDyn ? i + 1 + k : dynIdx[start + k];
             Body& A = bodies[i];
             Body& B = bodies[j];
             if (!A.alive || !B.alive) continue;
@@ -463,8 +468,12 @@ void World::collisions(bool firstPass) {
             Vec2 vb = pointVel(B, c.p, -c.n);
             Vec2 vrel = vb - va;
             float vn = dot(vrel, c.n);
+            float jn = 0;
             if (vn < 0) {
-                float jn = -(1 + m.e) * vn / sum;
+                // slow approach = resting contact: no bounce, so a ball lying on something is only
+                // pressed down by gravity (this also sets how much friction it can get)
+                float e = -vn < 30 ? 0.0f : m.e;
+                jn = -(1 + e) * vn / sum;
                 A.vel -= c.n * (jn * invA);
                 B.vel += c.n * (jn * invB);
                 // bumpers kick the other body away
@@ -478,15 +487,17 @@ void World::collisions(bool firstPass) {
                     events.push_back(ev);
                 }
             }
-            // friction: "rubbing" of the bat on the ball, also conveyors and windmills
-            if (m.fric > 0) {
+            // Coulomb friction: the bat "rubs" the ball (steering it on impact), conveyors carry, windmills
+            // flick. The tangential impulse can at most stop the sliding and is capped by mu * normal impulse,
+            // so a ball resting on a fast-moving bat slides instead of being glued to it.
+            if (m.mu > 0 && jn > 0) {
                 va = pointVel(A, c.p, c.n);
                 vb = pointVel(B, c.p, -c.n);
                 vrel = vb - va;
                 Vec2 vt = vrel - c.n * dot(vrel, c.n);
                 float vtl = vt.len();
                 if (vtl > 1e-3f) {
-                    float jt = m.fric * vtl / sum;
+                    float jt = std::min(vtl / sum, m.mu * jn);
                     Vec2 t = vt / vtl;
                     A.vel += t * (jt * invA);
                     B.vel -= t * (jt * invB);
