@@ -996,7 +996,7 @@ void Renderer::drawOverlay(Game& g) {
             std::snprintf(buf, sizeof buf, "HI-SCORE  %07d", g.settings.hiscore);
             text(buf, FONT_SMALL, 640, 618, 0xFFE070, ALIGN_CENTER);
             text(helpLine, FONT_SMALL, 640, 652, 0xD0D8E8, ALIGN_CENTER);
-            text("v1.0.0  by rsn8887", FONT_SMALL, 640, 682,
+            text("v1.1.0  by rsn8887", FONT_SMALL, 640, 682,
                  0xB8C0D8, ALIGN_CENTER);
             break;
         }
