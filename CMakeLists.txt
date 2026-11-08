@@ -15,7 +15,7 @@ if(PLATFORM STREQUAL "SWITCH" AND NOT CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE "$ENV{DEVKITPRO}/cmake/Switch.cmake")
 endif()
 
-project(BreakoutMayhem VERSION 1.1.0 LANGUAGES C CXX)
+project(BreakoutMayhem VERSION 1.2.0 LANGUAGES C CXX)
 
 if("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
     message(FATAL_ERROR "Please build out of the source tree, e.g. cmake -S BreakoutMayhem -B build")
