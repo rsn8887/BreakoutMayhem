@@ -12,7 +12,7 @@ std::mt19937 rng(12345);
 float frand(float a = 0, float b = 1) { return std::uniform_real_distribution<float>(a, b)(rng); }
 
 constexpr float PHYS_DT = 1.0f / 480.0f;
-constexpr float BAT_HW = 80, BAT_R = 12, DISC_R = 30; // bat: capsule, 160 px wide in total
+constexpr float DISC_R = 30;
 constexpr int MAX_BALLS = 8;
 
 bool breakable(const Body& b) {

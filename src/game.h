@@ -10,6 +10,9 @@
 constexpr int MAX_PLAYERS = 4;
 constexpr int SCREEN_W = 1280;
 constexpr int SCREEN_H = 720;
+// bat: a capsule BAT_HW * 2 wide in total, with round ends of radius BAT_R (so 2 * BAT_R thick)
+constexpr float BAT_HW = 70;
+constexpr float BAT_R = 15;
 
 enum class State { Title, Intro, Playing, Paused, LevelClear, GameOver, Victory };
 enum class Action { Up, Down, Left, Right, Confirm, Back, Pause };

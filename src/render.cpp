@@ -748,12 +748,12 @@ void Renderer::drawFields(Game& g) {
 }
 
 void Renderer::drawBat(const Body& b, float scale, Uint8 alpha, bool shadow) {
-    Tex& t = capsule(160, 12, playerColor(b.color), 0);
+    Tex& t = capsule(int(2 * BAT_HW), int(BAT_R), playerColor(b.color), 0);
     if (!t.t) return;
     float w = 2 * (b.hw + b.r) * scale, h = t.h * scale;
     Vec2 p = b.pos + off + (shadow ? Vec2(12, 12) : Vec2(0, 0));
     float x0 = p.x - w * 0.5f, y0 = p.y - h * 0.5f;
-    int cap = 13;
+    int cap = int(BAT_R) + 1;   // the round ends are drawn unstretched
     if (shadow) {
         SDL_SetTextureColorMod(t.t, 0, 0, 0);
         SDL_SetTextureAlphaMod(t.t, Uint8(alpha * 0.36f));
