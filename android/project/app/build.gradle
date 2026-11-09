@@ -1,0 +1,58 @@
+plugins {
+    id 'com.android.application'
+}
+
+def sdl2Src = project.findProperty('SDL2_SRC') ?: '/opt/SDL2'
+def sdl2TtfSrc = project.findProperty('SDL2_TTF_SRC') ?: '/opt/SDL2_ttf'
+def gameSrc = project.findProperty('GAME_SRC') ?: file('../../src').absolutePath
+def versionNameProp = project.findProperty('VERSION_NAME') ?: '1.0.0'
+def parts = versionNameProp.tokenize('.').collect { it as int } + [0, 0, 0]
+
+android {
+    namespace 'com.rsn8887.breakoutmayhem'
+    compileSdk 34
+    ndkVersion '26.3.11579264'
+
+    defaultConfig {
+        applicationId 'com.rsn8887.breakoutmayhem'
+        minSdk 21
+        targetSdk 34
+        versionCode parts[0] * 10000 + parts[1] * 100 + parts[2]
+        versionName versionNameProp
+        externalNativeBuild {
+            cmake {
+                arguments "-DSDL2_SRC=${sdl2Src}", "-DSDL2_TTF_SRC=${sdl2TtfSrc}", "-DGAME_SRC=${gameSrc}",
+                          '-DANDROID_STL=c++_static', '-DCMAKE_BUILD_TYPE=Release'
+            }
+        }
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // signed with the debug key so the APK can be sideloaded directly;
+            // use your own keystore for store releases
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'jni/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs = ['assets']
+        }
+    }
+
+    lint {
+        abortOnError false
+    }
+}

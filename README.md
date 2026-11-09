@@ -19,7 +19,7 @@ It uses hand-coded, force-based physics:
 - 1280×720, 30 levels in six level sets of five, each level built around a different physics idea
 - capsule bat with rounded ends: hits near an end deflect the ball, Arkanoid-style
 - up to 4 simultaneous players (mouse, keyboard, gamepads, Switch touch screen)
-- runs on Linux, macOS, Windows and Nintendo Switch
+- runs on Linux, macOS, Windows, Nintendo Switch and Android (phones, tablets and Android gaming handhelds)
 - power-ups that are physical objects (they fall, drift, bounce and can be sucked into holes)
 - combo multiplier: every brick broken without touching a bat raises the multiplier (up to x8)
 - procedurally generated, shaded, anti-aliased 90s-style graphics (no image files)
@@ -33,7 +33,7 @@ It uses hand-coded, force-based physics:
 | Player 2 | arrow keys (+ Right Shift turbo), or gamepad 2 (in a 1-player game the arrows also move player 1) |
 | Players 3–4 | gamepads 3 and 4 |
 | Gamepad | left stick / D-pad move, any face button or trigger = turbo, Start/+ = pause |
-| Switch | as gamepad; touch screen: drag to move the bat, tap to continue |
+| Switch / Android | as gamepad (built-in handheld controls work too); touch screen: drag to move the bat, tap to continue; Android Back button: pause |
 | Esc / P | pause menu |
 | F, F11, Alt+Enter | toggle fullscreen |
 | K / L | mouse sensitivity down / up |
@@ -89,6 +89,19 @@ docker run --rm -v "$PWD":/work -w /work devkitpro/devkita64 \
 
 Copy `build-switch/BreakoutMayhem.nro` to `/switch/` on the SD card. Settings and the high score are stored in
 `/switch/BreakoutMayhem/settings.txt`.
+
+### Android (Docker)
+
+Builds an APK for phones, tablets and Android gaming handhelds. Everything needed (Android SDK and NDK, Gradle,
+SDL2 and SDL2_ttf sources) is set up inside a Docker image, so only Docker is required:
+
+```sh
+./BreakoutMayhem/android/build-docker.sh   # -> build-android/BreakoutMayhem-<version>.apk
+```
+
+The image is x86-64 Linux (the only platform the Android NDK supports), so on Apple Silicon Docker runs it under
+emulation; the first build takes a while. The APK contains arm64-v8a, armeabi-v7a and x86_64 code and is signed with
+a debug key, so it can be installed directly (`adb install`, or copy it to the device and open it).
 
 ## Source layout
 

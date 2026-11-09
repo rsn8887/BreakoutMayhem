@@ -35,6 +35,8 @@ const float MOUSE_SCALE = 1.0f;
 std::string dataPath(const char* file) {
 #if defined(__SWITCH__)
     return std::string("romfs:/data/") + file;
+#elif defined(__ANDROID__)
+    return std::string("data/") + file;   // relative paths are read from the APK's assets
 #else
     char* base = SDL_GetBasePath();
     std::string p = base ? base : "./";
@@ -76,7 +78,7 @@ void saveSettings() {
 }
 
 void setFullscreen(bool on) {
-#ifndef __SWITCH__
+#if !defined(__SWITCH__) && !defined(__ANDROID__)
     SDL_SetWindowFullscreen(window, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
 #endif
     game.settings.fullscreen = on;
@@ -221,7 +223,7 @@ void handleEvent(const SDL_Event& e, bool& running) {
             } else if (k == SDLK_k || k == SDLK_l) {
                 game.settings.mouseGain = clampf(game.settings.mouseGain + (k == SDLK_l ? 0.25f : -0.25f), 0.25f, 3.f);
                 game.settingsDirty = true;
-            } else if (k == SDLK_ESCAPE || k == SDLK_BACKSPACE) {
+            } else if (k == SDLK_ESCAPE || k == SDLK_BACKSPACE || k == SDLK_AC_BACK) {
                 game.action(Action::Back);
             } else if (k == SDLK_p) {
                 game.action(Action::Pause);
@@ -237,6 +239,7 @@ void handleEvent(const SDL_Event& e, bool& running) {
             break;
         }
         case SDL_MOUSEMOTION:
+            if (e.motion.which == SDL_TOUCH_MOUSEID) break;  // touch is handled by the finger events
             if (SDL_GetRelativeMouseMode()) mouseRel += Vec2(float(e.motion.xrel), float(e.motion.yrel));
             else menuHover(e.motion.x, e.motion.y);
             break;
@@ -291,7 +294,7 @@ void handleEvent(const SDL_Event& e, bool& running) {
 bool initVideo(bool software) {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
     Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
-#ifdef __SWITCH__
+#if defined(__SWITCH__) || defined(__ANDROID__)
     flags = SDL_WINDOW_FULLSCREEN;
 #endif
     window = SDL_CreateWindow("Breakout Mayhem", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_W, SCREEN_H, flags);
@@ -370,6 +373,10 @@ int main(int argc, char** argv) {
         return Game::runSelfTest(secs, true) ? 0 : 1;
     }
     platformInit();
+#ifdef __ANDROID__
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");   // Back opens the pause menu instead of quitting
+#endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER | SDL_INIT_TIMER) != 0) {
         SDL_Log("SDL_Init: %s", SDL_GetError());
         return 1;
@@ -388,6 +395,8 @@ int main(int argc, char** argv) {
     if (!renderer.init(sdlRenderer, dataPath("Poppins-Bold.ttf"))) return 1;
 #if defined(__SWITCH__)
     renderer.helpLine = "Left stick / D-Pad: move bat     A/B/X/Y: turbo     +: pause     Touch: drag the bat";
+#elif defined(__ANDROID__)
+    renderer.helpLine = "Left stick / D-Pad: move bat     A/B/X/Y: turbo     Start / Back: pause     Touch: drag the bat";
 #else
     renderer.helpLine = "P1: Mouse / WASD + Ctrl / Pad 1     P2: Arrows + Shift / Pad 2     P3-4: Pads     F: Fullscreen";
 #endif
