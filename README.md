@@ -67,7 +67,7 @@ cmake --build build -j
 App bundle and drag-to-Applications DMG (also bundles the SDL dylibs; needs `brew install dylibbundler`):
 
 ```sh
-./BreakoutMayhem/tools/make_dmg.sh        # -> build-mac/BreakoutMayhem-1.2.0.dmg
+./BreakoutMayhem/tools/make_dmg.sh        # -> build-mac/BreakoutMayhem-1.3.0.dmg
 ```
 
 ### Windows (MSYS2 UCRT64)
