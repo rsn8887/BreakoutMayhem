@@ -13,6 +13,9 @@ constexpr int SCREEN_H = 720;
 // bat: a capsule BAT_HW * 2 wide in total, with round ends of radius BAT_R (so 2 * BAT_R thick)
 constexpr float BAT_HW = 70;
 constexpr float BAT_R = 15;
+// Overall game speed: the whole simulation (ball, bat, gravity, moving bricks, enemies) runs at this
+// fraction of real time, which makes the game calmer. 1.0 = original speed.
+constexpr float GAME_SPEED = 0.8f;
 
 enum class State { Title, Intro, Playing, Paused, LevelClear, GameOver, Victory };
 enum class Action { Up, Down, Left, Right, Confirm, Back, Pause };
@@ -52,7 +55,7 @@ struct PendingBlast {
 };
 
 struct Settings {
-    float mouseGain = 1.0f;
+    float sensitivity = 1.0f;   // control sensitivity: scales mouse, stick, D-pad and keyboard bat speed
     bool sound = true;
     bool shadows = true;
     bool fullscreen = false;

@@ -193,8 +193,8 @@ Material material(const Body& A, const Body& B) {
     const Body* brick = A.kind == Kind::Brick ? &A : (B.kind == Kind::Brick ? &B : nullptr);
     if (has(Kind::Pill)) return {0.5f, 0.3f};
     if (has(Kind::Enemy)) return {0.8f, 0.0f};
-    if (A.kind == Kind::Ball && B.kind == Kind::Ball) return {1.0f, 0.0f};
-    if (has(Kind::Ball) && has(Kind::Player)) return {0.97f, 0.5f}; // grippy bat: swipe to steer
+    if (A.kind == Kind::Ball && B.kind == Kind::Ball) return {0.95f, 0.0f};
+    if (has(Kind::Ball) && has(Kind::Player)) return {0.92f, 0.5f}; // grippy bat: swipe to steer
     if (A.kind == Kind::Player && B.kind == Kind::Player) return {0.3f, 0.0f};
     if (has(Kind::Player) && brick) {
         if (brick->btype == BrickType::Bumper) return {0.6f, 0.0f};
@@ -205,7 +205,7 @@ Material material(const Body& A, const Body& B) {
             case BrickType::Puck: return {0.95f, 0.1f};
             case BrickType::Conveyor: return {0.85f, 0.6f};
             case BrickType::Rail: return {0.92f, 0.2f};
-            default: return {1.0f, 0.0f};
+            default: return {0.92f, 0.0f};   // bricks take some energy out of the ball
         }
     }
     // brick vs brick (pucks, pendulums)
@@ -267,7 +267,7 @@ void World::clear() {
     events.clear();
     gravity = Vec2(0, 1450);
     gravityRot = 0;
-    wallRestitution = 1.0f;
+    wallRestitution = 0.9f;
     time = 0;
 }
 

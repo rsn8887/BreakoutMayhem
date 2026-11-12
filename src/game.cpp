@@ -268,8 +268,8 @@ void Game::update(float dt, const Vec2 inputs[MAX_PLAYERS]) {
             setInputs();
             updateEnemies();
             updateBatSizes();
-            simulate(dt);
-            updateShots(dt);
+            simulate(dt * GAME_SPEED);
+            updateShots(dt * GAME_SPEED);
             for (auto* t : {&tEnlarge, &tShrink, &tSlow, &tMega, &tMagnet, &tGun}) *t = std::max(0.f, *t - dt);
             darkness += (targetDarkness() - darkness) * std::min(1.f, dt * 2.5f);
             if (demoTimer > 35 || bricksLeft() == 0 || (ballsAlive() == 0 && stateTime > 1)) {
@@ -283,8 +283,8 @@ void Game::update(float dt, const Vec2 inputs[MAX_PLAYERS]) {
             setInputs();
             updateEnemies();
             updateBatSizes();
-            simulate(tSlow > 0 ? dt * 0.6f : dt);
-            updateShots(tSlow > 0 ? dt * 0.6f : dt);
+            simulate(dt * GAME_SPEED * (tSlow > 0 ? 0.6f : 1.f));
+            updateShots(dt * GAME_SPEED * (tSlow > 0 ? 0.6f : 1.f));
             for (auto* t : {&tEnlarge, &tShrink, &tSlow, &tMega, &tMagnet, &tGun}) *t = std::max(0.f, *t - dt);
             darkness += (targetDarkness() - darkness) * std::min(1.f, dt * 2.5f);
             for (auto& b : world.bodies)
@@ -1010,7 +1010,7 @@ std::string Game::titleItem(int i) const {
                 std::snprintf(buf, sizeof buf, "Level Set: %d  (%d-%d)", startSet + 1, first + 1, last + 1);
             return buf;
         }
-        case 3: std::snprintf(buf, sizeof buf, "Mouse Speed: %.2f", settings.mouseGain); return buf;
+        case 3: std::snprintf(buf, sizeof buf, "Control Sensitivity: %.2f", settings.sensitivity); return buf;
         case 4: return settings.sound ? "Sound: On" : "Sound: Off";
         case 5: return "Quit";
     }
@@ -1041,7 +1041,7 @@ void Game::action(Action a, int) {
                     case 1: numPlayers = (numPlayers - 1 + d + MAX_PLAYERS) % MAX_PLAYERS + 1; break;
                     case 2: startSet = (startSet + d + setChoices()) % setChoices(); break;
                     case 3:
-                        settings.mouseGain = clampf(settings.mouseGain + 0.25f * d, 0.25f, 3.0f);
+                        settings.sensitivity = clampf(settings.sensitivity + 0.25f * d, 0.25f, 3.0f);
                         settingsDirty = true;
                         break;
                     case 4:

@@ -376,22 +376,31 @@ Renderer::Tex& Renderer::hole(int r) {
     int size = 2 * r + 2;
     float c = size * 0.5f, R0 = float(r);
     auto sdf = [=](float x, float y) { return std::sqrt((x - c) * (x - c) + (y - c) * (y - c)) - R0; };
+    // A shaft going straight down into the floor: nothing is raised. The edge is semi-transparent so the level's
+    // background runs right up to it; the near (top-left) side lies in the shadow of the floor's edge, the far
+    // (bottom-right) inner wall catches the light, and the shaft fades to black with faint bands as it goes down.
     auto shade = [=](float x, float y, float) {
         float dx = x - c, dy = y - c;
         float dist = std::sqrt(dx * dx + dy * dy);
-        float t = dist / R0;
+        float t = std::min(1.f, dist / R0);                      // 0 = centre, 1 = edge
         Vec2 dir = dist > 0.01f ? Vec2(dx / dist, dy / dist) : Vec2(0, 0);
-        RGBf o = mix(rgb(0x050509), rgb(0x2A2C38), t * t);
-        float lit = -(dir.x * L2.x + dir.y * L2.y); // far (bottom-right) wall catches the light
-        if (t > 0.5f) {
-            float wv = (t - 0.5f) / 0.5f;
-            o = add(o, 0.28f * wv * lit);
-        }
-        if (t > 0.86f) {
-            float rim = 0.75f + 0.35f * (dir.x * L2.x + dir.y * L2.y);
-            o = mix(o, mul(rgb(0x9098A8), rim), 0.85f);
-        }
-        o.a = 1;
+        float facing = dir.x * L2.x + dir.y * L2.y;              // +1 on the top-left (near) side
+        float lit = std::max(0.f, -facing);                      // far wall faces the light
+        auto smooth = [](float e0, float e1, float v) {
+            float k = clampf((v - e0) / (e1 - e0), 0.f, 1.f);
+            return k * k * (3 - 2 * k);
+        };
+        // inner wall: dim on the near side, lit on the far side
+        RGBf o = mul(rgb(0x4A5064), 0.35f + 1.05f * lit);
+        // the floor's top-left edge throws a crisp shadow across the upper part of the wall
+        Vec2 sp(dx + L2.x * R0 * 0.22f, dy + L2.y * R0 * 0.22f);    // shadow circle shifted towards the light
+        float inShadow = smooth(R0 * 0.98f, R0 * 0.90f, std::sqrt(sp.x * sp.x + sp.y * sp.y));
+        o = mul(o, 1.f - 0.7f * (1.f - inShadow));
+        // depth: the wall recedes into black towards the middle, with faint bands like a tunnel
+        float d = smooth(0.25f, 1.f, t);
+        o = mul(o, d * d * (1.f + 0.12f * std::sin(t * 38.f)));
+        // the background shows through at the very edge, so the floor visibly drops away
+        o.a = 1.f - 0.6f * smooth(0.86f, 1.0f, t);
         return o;
     };
     Tex t;
@@ -450,14 +459,83 @@ void Renderer::makeBackground(float hue) {
     SDL_FreeSurface(s);
 }
 
+// Renders a word letter by letter with optical spacing. The bundled Poppins has no kerning data, so diagonal and
+// round pairs (A-Y, K-O) end up with visibly wider gaps than straight pairs. For every pair the real closest
+// distance between the letter shapes is measured row by row; pairs much more open than usual are pulled in.
+static SDL_Surface* renderSpacedWord(TTF_Font* font, const char* word) {
+    struct Glyph { SDL_Surface* s; int adv; std::vector<int> left, right; };
+    std::vector<Glyph> gl;
+    for (const char* c = word; *c; c++) {
+        char str[2] = {*c, 0};
+        SDL_Surface* r = TTF_RenderUTF8_Blended(font, str, SDL_Color{255, 255, 255, 255});
+        if (!r) continue;
+        Glyph g;
+        g.s = SDL_ConvertSurfaceFormat(r, SDL_PIXELFORMAT_ARGB8888, 0);
+        SDL_FreeSurface(r);
+        int minx, maxx, miny, maxy;
+        if (TTF_GlyphMetrics32(font, Uint32(Uint8(*c)), &minx, &maxx, &miny, &maxy, &g.adv) != 0) g.adv = g.s->w;
+        // ink extents per row (-1 = empty row)
+        Uint32* p = static_cast<Uint32*>(g.s->pixels);
+        g.left.assign(size_t(g.s->h), -1);
+        g.right.assign(size_t(g.s->h), -1);
+        for (int y = 0; y < g.s->h; y++)
+            for (int x = 0; x < g.s->w; x++)
+                if (((p[y * (g.s->pitch / 4) + x] >> 24) & 255) > 100) {
+                    if (g.left[size_t(y)] < 0) g.left[size_t(y)] = x;
+                    g.right[size_t(y)] = x;
+                }
+        gl.push_back(g);
+    }
+    if (gl.empty()) return nullptr;
+    const size_t n = gl.size();
+    std::vector<int> pos(n, 0);
+    for (size_t i = 1; i < n; i++) pos[i] = pos[i - 1] + gl[i - 1].adv;
+    // closest distance between neighbouring letters
+    std::vector<float> gap(n > 1 ? n - 1 : 0, 0.f);
+    for (size_t i = 0; i + 1 < n; i++) {
+        float g = 1e9f;
+        int h = std::min(gl[i].s->h, gl[i + 1].s->h);
+        for (int y = 0; y < h; y++) {
+            if (gl[i].right[size_t(y)] < 0 || gl[i + 1].left[size_t(y)] < 0) continue;
+            g = std::min(g, float(pos[i + 1] + gl[i + 1].left[size_t(y)] - pos[i] - gl[i].right[size_t(y)]));
+        }
+        gap[i] = g < 1e8f ? g : 0.f;
+    }
+    std::vector<float> sorted = gap;
+    std::sort(sorted.begin(), sorted.end());
+    float ref = sorted.empty() ? 0.f : sorted[sorted.size() / 2];   // typical gap of this word
+    int shift = 0;
+    for (size_t i = 0; i + 1 < n; i++) {
+        if (gap[i] > ref * 1.3f) shift += int(std::lround((ref + 0.3f * (gap[i] - ref)) - gap[i]));
+        pos[i + 1] += shift;
+    }
+    int W = 0, H = 0;
+    for (size_t i = 0; i < n; i++) {
+        W = std::max(W, pos[i] + gl[i].s->w);
+        H = std::max(H, gl[i].s->h);
+    }
+    SDL_Surface* out = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ARGB8888);
+    Uint32* dst = static_cast<Uint32*>(out->pixels);
+    for (int i = 0; i < W * H; i++) dst[i] = 0x00FFFFFF;
+    for (size_t i = 0; i < n; i++) {
+        Uint32* p = static_cast<Uint32*>(gl[i].s->pixels);
+        for (int y = 0; y < gl[i].s->h; y++)
+            for (int x = 0; x < gl[i].s->w; x++) {
+                int X = pos[i] + x;
+                if (X < 0 || X >= W) continue;
+                Uint32 a = p[y * (gl[i].s->pitch / 4) + x] >> 24;
+                Uint32& d = dst[y * (out->pitch / 4) + X];
+                if (a > (d >> 24)) d = (a << 24) | 0xFFFFFF;
+            }
+        SDL_FreeSurface(gl[i].s);
+    }
+    return out;
+}
+
 void Renderer::makeLogo() {
-    SDL_Surface* a = TTF_RenderUTF8_Blended(fonts[FONT_HUGE], "BREAKOUT", SDL_Color{255, 255, 255, 255});
-    SDL_Surface* b = TTF_RenderUTF8_Blended(fonts[FONT_HUGE], "MAYHEM", SDL_Color{255, 255, 255, 255});
-    if (!a || !b) return;
-    SDL_Surface* sa = SDL_ConvertSurfaceFormat(a, SDL_PIXELFORMAT_ARGB8888, 0);
-    SDL_Surface* sb = SDL_ConvertSurfaceFormat(b, SDL_PIXELFORMAT_ARGB8888, 0);
-    SDL_FreeSurface(a);
-    SDL_FreeSurface(b);
+    SDL_Surface* sa = renderSpacedWord(fonts[FONT_HUGE], "BREAKOUT");
+    SDL_Surface* sb = renderSpacedWord(fonts[FONT_HUGE], "MAYHEM");
+    if (!sa || !sb) return;
     const int pad = 8, gap = -26;
     int W = std::max(sa->w, sb->w) + 2 * pad;
     int H = sa->h + sb->h + gap + 2 * pad;
@@ -780,8 +858,25 @@ void Renderer::drawBat(const Body& b, float scale, Uint8 alpha, bool shadow) {
     }
 }
 
+// Fake height for things that can fall into holes: inside a hole's pull the shadow moves in under the object,
+// so it looks like it is being sucked down towards the hole. 1 = normal height, 0.1 = right at the hole.
+static float heightAboveHoles(const World& w, const Body& b) {
+    bool sinkable = b.kind == Kind::Ball || b.kind == Kind::Pill || (b.kind == Kind::Brick && b.btype == BrickType::Puck);
+    if (!sinkable) return 1.f;
+    float h = 1.f;
+    for (const auto& hole : w.holes) {
+        float d = (b.pos - hole.pos).len();
+        if (d >= hole.suctionR) continue;
+        float inner = hole.r * 0.5f;
+        float t = clampf((d - inner) / std::max(1.f, hole.suctionR - inner), 0.f, 1.f);
+        t = t * t * (3 - 2 * t);   // smooth
+        h = std::min(h, 0.1f + 0.9f * t);
+    }
+    return h;
+}
+
 void Renderer::drawBody(Game& g, const Body& b, float scale, Uint8 alpha, bool shadow) {
-    Vec2 p = b.pos + off + (shadow ? Vec2(12, 12) : Vec2(0, 0));
+    Vec2 p = b.pos + off + (shadow ? Vec2(12, 12) * heightAboveHoles(g.world, b) : Vec2(0, 0));
     switch (b.kind) {
         case Kind::Ball: {
             uint32_t c = b.mega ? 0xFF5A2A : (b.invMass < 20 ? 0x6E7078 : 0xD8DCE6);
@@ -1015,9 +1110,12 @@ void Renderer::drawWorld(Game& g) {
     for (const auto& b : w.bodies) drawBody(g, b, 1, 255, true);
     for (const auto& gh : g.ghosts) {
         float t = gh.t / gh.dur;
+        Body bb = gh.body;
         if (gh.mode == 0) {
-            Body bb = gh.body;
             drawBody(g, bb, 1 + 0.4f * t, Uint8(255 * (1 - t)), true);
+        } else {   // sinking into a hole: the shadow follows it in
+            bb.pos = gh.body.pos + (gh.target - gh.body.pos) * std::min(1.f, t * 1.6f);
+            drawBody(g, bb, 1 - 0.85f * t, Uint8(255 * (1 - t * t)), true);
         }
     }
     // bodies: bricks first, then pills, players, balls

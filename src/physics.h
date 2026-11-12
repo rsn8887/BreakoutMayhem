@@ -146,7 +146,7 @@ struct World {
 
     Vec2 gravity{0, 1450};
     float gravityRot = 0;   // rad/s, rotating gravity
-    float wallRestitution = 1.0f;
+    float wallRestitution = 0.9f;
     float time = 0;
     float left = 10, top = 50, right = 1270, bottom = 710;
     int nextId = 1;

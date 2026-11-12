@@ -61,19 +61,19 @@ void loadSettings() {
     while (f >> key) {
         if (key == "hiscore") f >> s.hiscore;
         else if (key == "maxlevel") f >> s.maxLevel;
-        else if (key == "mousegain") f >> s.mouseGain;
+        else if (key == "sensitivity" || key == "mousegain") f >> s.sensitivity;  // mousegain: older versions
         else if (key == "sound") f >> s.sound;
         else if (key == "fullscreen") f >> s.fullscreen;
         else { std::string skip; f >> skip; }
     }
     s.maxLevel = std::max(1, std::min(s.maxLevel, levelCount()));
-    s.mouseGain = clampf(s.mouseGain, 0.25f, 3.0f);
+    s.sensitivity = clampf(s.sensitivity, 0.25f, 3.0f);
 }
 
 void saveSettings() {
     std::ofstream f(settingsPath);
     const Settings& s = game.settings;
-    f << "hiscore " << s.hiscore << "\nmaxlevel " << s.maxLevel << "\nmousegain " << s.mouseGain << "\nsound "
+    f << "hiscore " << s.hiscore << "\nmaxlevel " << s.maxLevel << "\nsensitivity " << s.sensitivity << "\nsound "
       << s.sound << "\nfullscreen " << s.fullscreen << "\n";
 }
 
@@ -117,18 +117,25 @@ Vec2 padInput(int slot) {
     SDL_GameController* c = pads[slot];
     if (!c) return {};
     auto ax = [&](SDL_GameControllerAxis a) { return SDL_GameControllerGetAxis(c, a) / 32767.f; };
-    Vec2 v(ax(SDL_CONTROLLER_AXIS_LEFTX), ax(SDL_CONTROLLER_AXIS_LEFTY));
+    auto bt = [&](SDL_GameControllerButton b) { return SDL_GameControllerGetButton(c, b) != 0; };
+    // A single sideways Joy-Con on Switch: SDL only reports its stick as digital D-pad buttons (full speed on the
+    // slightest tilt) and its SL/SR rail buttons as triggers, so read the analog stick directly and ignore those.
+    float jx = 0, jy = 0;
+    bool singleJoyCon = platformSingleJoyConStick(SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(c)), jx, jy);
+    Vec2 v = singleJoyCon ? Vec2(jx, jy) : Vec2(ax(SDL_CONTROLLER_AXIS_LEFTX), ax(SDL_CONTROLLER_AXIS_LEFTY));
     if (v.len() < 0.15f) v = Vec2(0, 0);
     if (v.len() > 1) v = v.norm();
     v *= KEY_SPEED;
-    auto bt = [&](SDL_GameControllerButton b) { return SDL_GameControllerGetButton(c, b) != 0; };
-    if (bt(SDL_CONTROLLER_BUTTON_DPAD_LEFT)) v.x = -KEY_SPEED;
-    if (bt(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) v.x = KEY_SPEED;
-    if (bt(SDL_CONTROLLER_BUTTON_DPAD_UP)) v.y = -KEY_SPEED;
-    if (bt(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) v.y = KEY_SPEED;
+    if (!singleJoyCon) {
+        if (bt(SDL_CONTROLLER_BUTTON_DPAD_LEFT)) v.x = -KEY_SPEED;
+        if (bt(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) v.x = KEY_SPEED;
+        if (bt(SDL_CONTROLLER_BUTTON_DPAD_UP)) v.y = -KEY_SPEED;
+        if (bt(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) v.y = KEY_SPEED;
+    }
     bool turbo = bt(SDL_CONTROLLER_BUTTON_A) || bt(SDL_CONTROLLER_BUTTON_B) || bt(SDL_CONTROLLER_BUTTON_X) ||
-                 bt(SDL_CONTROLLER_BUTTON_Y) || ax(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 0.5f ||
-                 ax(SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 0.5f;
+                 bt(SDL_CONTROLLER_BUTTON_Y);
+    if (!singleJoyCon)
+        turbo = turbo || ax(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 0.5f || ax(SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 0.5f;
     if (turbo) v *= TURBO;
     return v;
 }
@@ -150,11 +157,15 @@ void gatherInputs(float dt, Vec2 out[MAX_PLAYERS]) {
 
     // mouse: bat follows the mouse velocity (relative mode)
     Vec2 mouse;
-    if (dt > 0) mouse = mouseRel / dt * (game.settings.mouseGain * MOUSE_SCALE);
+    if (dt > 0) mouse = mouseRel / dt * (game.settings.sensitivity * MOUSE_SCALE);
     if (mouse.len() > 2600) mouse = mouse.norm() * 2600;
     mouseRel = Vec2(0, 0);
 
-    for (int i = 0; i < MAX_PLAYERS; i++) out[i] = padInput(i);
+    // control sensitivity applies to every input (the mouse already includes it above)
+    const float sens = game.settings.sensitivity;
+    wasd *= sens;
+    arrows *= sens;
+    for (int i = 0; i < MAX_PLAYERS; i++) out[i] = padInput(i) * sens;
     out[0] = combine(combine(out[0], wasd), mouse);
     if (game.worldPlayers == 1) out[0] = combine(out[0], arrows);
     else out[1] = combine(out[1], arrows);
@@ -221,7 +232,7 @@ void handleEvent(const SDL_Event& e, bool& running) {
                 Audio::setEnabled(game.settings.sound);
                 game.settingsDirty = true;
             } else if (k == SDLK_k || k == SDLK_l) {
-                game.settings.mouseGain = clampf(game.settings.mouseGain + (k == SDLK_l ? 0.25f : -0.25f), 0.25f, 3.f);
+                game.settings.sensitivity = clampf(game.settings.sensitivity + (k == SDLK_l ? 0.25f : -0.25f), 0.25f, 3.f);
                 game.settingsDirty = true;
             } else if (k == SDLK_ESCAPE || k == SDLK_BACKSPACE || k == SDLK_AC_BACK) {
                 game.action(Action::Back);
@@ -274,10 +285,14 @@ void handleEvent(const SDL_Event& e, bool& running) {
         case SDL_CONTROLLERBUTTONDOWN: {
             int slot = padSlot(e.cbutton.which);
             bool menu = game.state != State::Playing;
+            // On a single sideways Joy-Con, SDL's Switch port reports the stick click as START. The stick is easy
+            // to click by accident, so START is ignored there; -/+ (reported as BACK) still pauses.
+            float jx, jy;
+            bool singleJoyCon = platformSingleJoyConStick(e.cbutton.which, jx, jy);
             switch (e.cbutton.button) {
                 case SDL_CONTROLLER_BUTTON_A: if (menu) game.action(Action::Confirm, slot); break;
                 case SDL_CONTROLLER_BUTTON_B: if (menu) game.action(Action::Back, slot); break;
-                case SDL_CONTROLLER_BUTTON_START: game.action(Action::Pause, slot); break;
+                case SDL_CONTROLLER_BUTTON_START: if (!singleJoyCon) game.action(Action::Pause, slot); break;
                 case SDL_CONTROLLER_BUTTON_BACK: game.action(Action::Back, slot); break;
                 case SDL_CONTROLLER_BUTTON_DPAD_UP: if (menu) game.action(Action::Up, slot); break;
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN: if (menu) game.action(Action::Down, slot); break;

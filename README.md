@@ -36,7 +36,7 @@ It uses hand-coded, force-based physics:
 | Switch / Android | as gamepad (built-in handheld controls work too); touch screen: drag to move the bat, tap to continue; Android Back button: pause |
 | Esc / P | pause menu |
 | F, F11, Alt+Enter | toggle fullscreen |
-| K / L | mouse sensitivity down / up |
+| K / L | control sensitivity down / up (mouse, sticks, D-pads and keys; also in the title menu) |
 | M | sound on / off |
 
 In the title menu, choose the number of players and a level set: one of the six sets of five levels, or "Complete" to play all 30 levels in a row.
