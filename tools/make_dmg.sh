@@ -6,7 +6,7 @@
 set -e
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$(dirname "$SRC")/build-mac"
-VERSION=1.3.0
+VERSION=1.4.0
 APP="$BUILD/Breakout Mayhem.app"
 
 cmake -S "$SRC" -B "$BUILD" -DMACOS_BUNDLE=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
